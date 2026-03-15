@@ -3,12 +3,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "gitwise"
-version = "0.1.0"
+name = "gitdude"
+version = "1.0.0"
 description = "AI-powered Git workflow assistant — commit, review, recover, and more with a single command"
 readme = "README.md"
 license = { text = "MIT" }
-authors = [{ name = "GitWise Contributors" }]
+authors = [{ name = "GitDude Contributors" }]
 keywords = ["git", "ai", "cli", "developer-tools", "gemini", "groq", "openai", "ollama"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -46,13 +46,14 @@ dev = [
 ]
 
 [project.scripts]
+gitdude = "gitwise.main:main"
 gitwise = "gitwise.main:main"
 
 [project.urls]
-Homepage = "https://github.com/gitwise/gitwise"
-Repository = "https://github.com/gitwise/gitwise"
-Documentation = "https://github.com/gitwise/gitwise#readme"
-"Bug Tracker" = "https://github.com/gitwise/gitwise/issues"
+Homepage = "https://github.com/utkarshgupta188/gitdude"
+Repository = "https://github.com/utkarshgupta188/gitdude"
+Documentation = "https://github.com/utkarshgupta188/gitdude#readme"
+"Bug Tracker" = "https://github.com/utkarshgupta188/gitdude/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["gitwise"]

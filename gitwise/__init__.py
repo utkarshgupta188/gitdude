@@ -1,5 +1,5 @@
-"""GitWise — AI-powered Git workflow assistant."""
+"""GitDude — AI-powered Git workflow assistant."""
 
-__version__ = "0.1.0"
-__author__ = "GitWise Contributors"
+__version__ = "1.0.0"
+__author__ = "GitDude Contributors"
 __license__ = "MIT"

@@ -1,5 +1,5 @@
 """
-main.py — GitWise CLI: Typer app with all command definitions.
+main.py — GitDude CLI: Typer app with all command definitions.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from rich.prompt import Prompt
 
 app = typer.Typer(
     name="gitwise",
-    help="🧠 GitWise — AI-powered Git workflow assistant",
+    help="🧠 GitDude — AI-powered Git workflow assistant",
     add_completion=True,
     rich_markup_mode="rich",
     no_args_is_help=True,
@@ -31,7 +31,7 @@ def _ensure_configured() -> None:
     from gitwise.config import is_configured
     if not is_configured():
         console.print(
-            "[bold yellow]⚠️  GitWise is not configured yet.[/bold yellow]\n"
+            "[bold yellow]⚠️  GitDude is not configured yet.[/bold yellow]\n"
             "Let's set it up now...\n"
         )
         _run_interactive_config()
@@ -45,7 +45,7 @@ def _run_interactive_config() -> None:
     from gitwise.utils import success_panel, info_panel, divider
 
     divider()
-    console.print("[bold cyan]🔧 GitWise Configuration Setup[/bold cyan]")
+    console.print("[bold cyan]🔧 GitDude Configuration Setup[/bold cyan]")
     divider()
 
     existing = get_config()

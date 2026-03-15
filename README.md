@@ -1,11 +1,11 @@
-# GitWise 🧠
+# GitDude 🧠
 
 [![PyPI version](https://img.shields.io/pypi/v/gitwise.svg)](https://pypi.org/project/gitwise/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Downloads](https://img.shields.io/pypi/dm/gitwise)](https://pypi.org/project/gitwise/)
 
-**GitWise is an AI-powered Git workflow assistant that turns plain English into git actions — commit, review, recover, and understand your repo from the terminal.**
+**GitDude is an AI-powered Git workflow assistant that turns plain English into git actions — commit, review, recover, and understand your repo from the terminal.**
 
 ---
 
@@ -17,7 +17,7 @@
 - 🚑 **Emergency recovery** — `gitwise whoops` diagnoses and fixes git disasters
 - 📋 **PR generation** — full GitHub PR description, auto-copied to clipboard
 - 🎨 **Beautiful Rich UI** — tables, panels, spinners, color-coded output
-- 🔐 **Secure config** — keys stored in `~/.gitwise/config.json`, never in `.env`
+- 🔐 **Secure config** — keys stored in `~/.gitdude/config.json`, never in `.env`
 
 ---
 
@@ -25,7 +25,7 @@
 
 ```bash
 # 1. Install
-pip install gitwise
+pip install gitdude
 
 # 2. Configure (takes 60 seconds)
 gitwise config
@@ -45,7 +45,7 @@ gitwise whoops
 ## 📦 Installation
 
 ```bash
-pip install gitwise
+pip install gitdude
 ```
 
 **Python 3.10+ required.**
@@ -217,7 +217,7 @@ gitwise/
 ├── main.py        # Typer app — all command definitions
 ├── ai.py          # Unified AI provider wrapper (ask_ai)
 ├── git_ops.py     # GitPython operations (diff, log, push, reset…)
-├── config.py      # Config at ~/.gitwise/config.json
+├── config.py      # Config at ~/.gitdude/config.json
 └── utils.py       # Rich panels, tables, prompts, helpers
 ```
 
@@ -240,7 +240,7 @@ All providers go through a single interface: `ask_ai(prompt) -> str` with spinne
 - ✅ **`--dry-run` flag** available on all mutating commands
 - ✅ **Color-coded risk levels** — green (safe), yellow (caution), red (destructive)
 - ✅ **No tracebacks** — all exceptions caught and shown as friendly Rich error panels
-- ✅ **API keys** stored privately in `~/.gitwise/config.json`, never in project files
+- ✅ **API keys** stored privately in `~/.gitdude/config.json`, never in project files
 
 ---
 
