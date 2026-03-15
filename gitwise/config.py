@@ -1,6 +1,6 @@
 """
-config.py — GitWise configuration management.
-Stores config in ~/.gitwise/config.json.
+config.py — GitDude configuration management.
+Stores config in ~/.gitdude/config.json.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-CONFIG_DIR = Path.home() / ".gitwise"
+CONFIG_DIR = Path.home() / ".gitdude"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 PROVIDERS = ["gemini", "groq", "ollama", "openai"]

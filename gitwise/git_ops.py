@@ -1,5 +1,5 @@
 """
-git_ops.py — All git operations via GitPython.
+git_ops.py — All git operations for GitDude via GitPython.
 """
 
 from __future__ import annotations

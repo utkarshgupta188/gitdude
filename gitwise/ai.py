@@ -1,5 +1,5 @@
 """
-ai.py — Unified AI provider wrapper.
+ai.py — Unified AI provider wrapper for GitDude.
 
 Single public function: ask_ai(prompt: str) -> str
 Supports: gemini, groq, ollama, openai
@@ -99,7 +99,7 @@ def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...") -> str:
 
     if not is_configured():
         error_panel(
-            "GitWise is not configured yet.\nRun [bold cyan]gitwise config[/bold cyan] to get started.",
+            "GitDude is not configured yet.\nRun [bold cyan]gitdude config[/bold cyan] to get started.",
             title="❌ Not Configured",
         )
         sys.exit(1)
@@ -112,7 +112,7 @@ def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...") -> str:
     if provider != "ollama" and not api_key:
         error_panel(
             f"No API key found for provider [bold]{provider}[/bold].\n"
-            f"Run [bold cyan]gitwise config[/bold cyan] to set your key.",
+            f"Run [bold cyan]gitdude config[/bold cyan] to set your key.",
             title="❌ Missing API Key",
         )
         sys.exit(1)
@@ -127,7 +127,7 @@ def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...") -> str:
     if provider_fn is None:
         error_panel(
             f"Unknown provider: [bold]{provider}[/bold]\n"
-            f"Run [bold cyan]gitwise config[/bold cyan] to choose a valid provider.",
+            f"Run [bold cyan]gitdude config[/bold cyan] to choose a valid provider.",
             title="❌ Invalid Provider",
         )
         sys.exit(1)

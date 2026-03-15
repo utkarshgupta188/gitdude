@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 app = typer.Typer(
-    name="gitwise",
+    name="gitdude",
     help="🧠 GitDude — AI-powered Git workflow assistant",
     add_completion=True,
     rich_markup_mode="rich",
@@ -120,7 +120,7 @@ def _run_interactive_config() -> None:
 
 
 # ---------------------------------------------------------------------------
-# gitwise push
+# gitdude push
 # ---------------------------------------------------------------------------
 
 @app.command("push")
@@ -235,7 +235,7 @@ def cmd_push(
 
 
 # ---------------------------------------------------------------------------
-# gitwise sync
+# gitdude sync
 # ---------------------------------------------------------------------------
 
 @app.command("sync")
@@ -288,7 +288,7 @@ def cmd_sync(
 
 
 # ---------------------------------------------------------------------------
-# gitwise back
+# gitdude back
 # ---------------------------------------------------------------------------
 
 @app.command("back")
@@ -379,7 +379,7 @@ def cmd_back(
 
 
 # ---------------------------------------------------------------------------
-# gitwise undo
+# gitdude undo
 # ---------------------------------------------------------------------------
 
 @app.command("undo")
@@ -390,7 +390,7 @@ def cmd_undo(
     """
     [bold green]AI diagnoses your git mistake and gives recovery steps.[/bold green]
 
-    Example: gitwise undo \"I accidentally committed my .env file\"
+    Example: gitdude undo "I accidentally committed my .env file"
     """
     _ensure_configured()
     from gitwise import git_ops
@@ -458,7 +458,7 @@ def cmd_undo(
 
 
 # ---------------------------------------------------------------------------
-# gitwise do
+# gitdude do
 # ---------------------------------------------------------------------------
 
 @app.command("do")
@@ -469,7 +469,7 @@ def cmd_do(
     """
     [bold green]Execute git operations from natural language.[/bold green]
 
-    Example: gitwise do \"stash my changes, switch to main, pull latest\"
+    Example: gitdude do "stash my changes, switch to main, pull latest"
     """
     _ensure_configured()
     from gitwise import git_ops
@@ -546,7 +546,7 @@ def cmd_do(
 
 
 # ---------------------------------------------------------------------------
-# gitwise review
+# gitdude review
 # ---------------------------------------------------------------------------
 
 @app.command("review")
@@ -596,7 +596,7 @@ def cmd_review(
 
 
 # ---------------------------------------------------------------------------
-# gitwise pr
+# gitdude pr
 # ---------------------------------------------------------------------------
 
 @app.command("pr")
@@ -661,7 +661,7 @@ def cmd_pr(
 
 
 # ---------------------------------------------------------------------------
-# gitwise explain
+# gitdude explain
 # ---------------------------------------------------------------------------
 
 @app.command("explain")
@@ -693,7 +693,7 @@ def cmd_explain():
 
 
 # ---------------------------------------------------------------------------
-# gitwise whoops
+# gitdude whoops
 # ---------------------------------------------------------------------------
 
 @app.command("whoops")
@@ -769,8 +769,8 @@ def cmd_whoops(
 
 
 # ---------------------------------------------------------------------------
-# gitwise sync (already defined above)
-# gitwise config
+# gitdude sync (already defined above)
+# gitdude config
 # ---------------------------------------------------------------------------
 
 @app.command("config")
@@ -779,7 +779,7 @@ def cmd_config(
     reset: bool = typer.Option(False, "--reset", help="Wipe config and re-run setup"),
 ):
     """
-    [bold green]Interactive configuration setup for GitWise.[/bold green]
+    [bold green]Interactive configuration setup for GitDude.[/bold green]
     """
     from gitwise.config import (
         get_config, save_config, CONFIG_FILE, mask_key, PROVIDERS
@@ -797,7 +797,7 @@ def cmd_config(
         cfg = get_config()
         provider = cfg.get("provider", "gemini")
         divider()
-        console.print("[bold cyan]📋 GitWise Configuration[/bold cyan]")
+        console.print("[bold cyan]📋 GitDude Configuration[/bold cyan]")
         divider()
         print_key_value("Provider", provider)
         print_key_value("Model", cfg.get("model", {}).get(provider, "N/A"))
