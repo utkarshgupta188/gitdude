@@ -17,7 +17,7 @@ def get_repo(path: str = ".") -> Repo:
     try:
         return Repo(path, search_parent_directories=True)
     except InvalidGitRepositoryError:
-        from gitwise.utils import error_panel
+        from gitdude.utils import error_panel
         error_panel(
             "The current directory is not inside a git repository.\n"
             "Run [bold cyan]git init[/bold cyan] or navigate to a repo first.",
@@ -42,6 +42,21 @@ def get_untracked_and_new_files(repo: Repo) -> str:
     for f in repo.untracked_files:
         lines.append(f"new file:   {f}")
     return "\n".join(lines)
+
+
+def get_untracked_diff(repo: Repo) -> str:
+    """Return the content of untracked files in a pseudo-diff format."""
+    diff_parts = []
+    for file_path_str in repo.untracked_files:
+        try:
+            full_path = Path(repo.working_dir) / file_path_str
+            if full_path.is_file():
+                content = full_path.read_text(encoding="utf-8", errors="replace")
+                # Format as a pseudo-diff for the AI
+                diff_parts.append(f"--- /dev/null\n+++ b/{file_path_str}\n@@ -0,0 +1,1 @@\n+{content}")
+        except Exception:
+            continue
+    return "\n".join(diff_parts)
 
 
 def get_status(repo: Repo) -> str:

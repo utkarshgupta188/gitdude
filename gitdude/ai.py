@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.spinner import Spinner
 
-from gitwise.config import (
+from gitdude.config import (
     get_config,
     get_current_provider,
     get_model_for_provider,
@@ -95,7 +95,7 @@ def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...") -> str:
     Shows a Rich spinner while waiting.
     Raises SystemExit on unrecoverable errors.
     """
-    from gitwise.utils import error_panel  # late import to avoid circular
+    from gitdude.utils import error_panel  # late import to avoid circular
 
     if not is_configured():
         error_panel(

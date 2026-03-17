@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gitdude"
-version = "1.0.1"
+version = "1.0.3"
 description = "AI-powered Git workflow assistant — commit, review, recover, and more with a single command"
 readme = "README.md"
 license = { text = "MIT" }
@@ -35,6 +35,7 @@ dependencies = [
     "groq>=0.9.0",
     "ollama>=0.2.0",
     "openai>=1.30.0",
+    "questionary>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -46,8 +47,8 @@ dev = [
 ]
 
 [project.scripts]
-gitdude = "gitwise.main:main"
-gitwise = "gitwise.main:main"
+gitdude = "gitdude.main:main"
+gitwise = "gitdude.main:main"
 
 [project.urls]
 Homepage = "https://github.com/utkarshgupta188/gitdude"
@@ -56,7 +57,7 @@ Documentation = "https://github.com/utkarshgupta188/gitdude#readme"
 "Bug Tracker" = "https://github.com/utkarshgupta188/gitdude/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["gitwise"]
+packages = ["gitdude"]
 
 [tool.ruff]
 line-length = 100

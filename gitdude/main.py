@@ -8,6 +8,7 @@ import sys
 from typing import Optional
 
 import typer
+import questionary
 from rich.console import Console
 from rich.prompt import Prompt
 
@@ -28,7 +29,7 @@ console = Console()
 
 def _ensure_configured() -> None:
     """Trigger interactive config setup if not yet configured."""
-    from gitwise.config import is_configured
+    from gitdude.config import is_configured
     if not is_configured():
         console.print(
             "[bold yellow]⚠️  GitDude is not configured yet.[/bold yellow]\n"
@@ -39,10 +40,10 @@ def _ensure_configured() -> None:
 
 def _run_interactive_config() -> None:
     """Interactive setup wizard (shared by `config` command and auto-trigger)."""
-    from gitwise.config import (
+    from gitdude.config import (
         PROVIDERS, get_config, save_config, DEFAULTS, get_model_for_provider
     )
-    from gitwise.utils import success_panel, info_panel, divider
+    from gitdude.utils import success_panel, info_panel, divider
 
     divider()
     console.print("[bold cyan]🔧 GitDude Configuration Setup[/bold cyan]")
@@ -51,12 +52,14 @@ def _run_interactive_config() -> None:
     existing = get_config()
 
     # Provider
-    console.print(f"\nAvailable providers: {', '.join(PROVIDERS)}")
-    provider = Prompt.ask(
-        "[bold cyan]Choose AI provider[/bold cyan]",
+    provider = questionary.select(
+        "Choose AI provider",
         choices=PROVIDERS,
         default=existing.get("provider", "gemini"),
-    )
+    ).ask()
+
+    if not provider:  # Handle Ctrl+C
+        raise typer.Exit(0)
 
     # API key
     api_key = ""
@@ -84,18 +87,24 @@ def _run_interactive_config() -> None:
     )
 
     # Default branch
-    default_branch = Prompt.ask(
-        "[bold cyan]Default branch[/bold cyan]",
+    default_branch = questionary.select(
+        "Default branch",
         choices=["main", "master"],
         default=existing.get("default_branch", "main"),
-    )
+    ).ask()
+
+    if not default_branch:
+        raise typer.Exit(0)
 
     # Commit style
-    commit_style = Prompt.ask(
-        "[bold cyan]Commit message style[/bold cyan]",
+    commit_style = questionary.select(
+        "Commit message style",
         choices=["conventional", "freeform"],
         default=existing.get("commit_style", "conventional"),
-    )
+    ).ask()
+
+    if not commit_style:
+        raise typer.Exit(0)
 
     # Build and save
     cfg = existing.copy()
@@ -135,10 +144,10 @@ def cmd_push(
     Stages all changes, generates a commit message via AI, and pushes.
     """
     _ensure_configured()
-    from gitwise import git_ops
-    from gitwise.ai import ask_ai
-    from gitwise.config import get_config
-    from gitwise.utils import (
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.config import get_config
+    from gitdude.utils import (
         ai_panel, error_panel, success_panel, warning_panel,
         confirm, ask, info_panel, console as _c
     )
@@ -165,11 +174,14 @@ def cmd_push(
     else:
         staged = git_ops.get_staged_diff(repo)
         if not staged:
-            all_diff = git_ops.get_all_diff(repo)
-            if not all_diff:
-                all_diff = git_ops.get_diff_unstaged(repo)
-            diff_text = all_diff
-            _c.print("[dim]No staged changes detected — using full working tree diff.[/dim]")
+            # Fallback to working tree diff
+            console.print("[dim]No staged changes detected — using full working tree diff.[/dim]")
+            diff_text = git_ops.get_all_diff(repo)
+            
+            # Include untracked files contents
+            untracked_diff = git_ops.get_untracked_diff(repo)
+            if untracked_diff:
+                diff_text += "\n" + untracked_diff
         else:
             diff_text = staged
 
@@ -181,16 +193,19 @@ def cmd_push(
     style_instructions = (
         "Use the Conventional Commits format: type(scope): description\n"
         "Types: feat, fix, chore, docs, refactor, style, test, perf, ci\n"
-        "Keep the subject line under 72 characters."
+        "The subject line should be a concise summary of the primary change.\n"
+        "If there are multiple distinct changes, list them in a brief bulleted body if it helps clarity."
         if commit_style == "conventional"
-        else "Write a clear, concise commit message in plain English."
+        else "Write a clear, concise commit message in plain English summarizing all significant changes."
     )
     prompt = (
-        f"You are an expert software engineer writing a git commit message.\n\n"
-        f"Commit style instruction:\n{style_instructions}\n\n"
+        f"You are an expert software engineer writing a git commit message for code changes.\n\n"
+        f"IMPORTANT: Analyze the ENTIRE diff below and ensure your message covers ALL significant modifications. "
+        f"Do not just focus on the last file or the largest change if multiple distinct things were updated.\n\n"
+        f"Style instructions:\n{style_instructions}\n\n"
         f"Git status:\n{status}\n\n"
         f"Git diff:\n{diff_text[:8000]}\n\n"
-        "Respond with ONLY the commit message. No explanation, no markdown, no quotes."
+        "Respond with ONLY the commit message (subject line, and optional body). No explanation, no markdown, no quotes."
     )
 
     commit_msg = ask_ai(prompt, spinner_msg="🤖 Generating commit message...")
@@ -203,13 +218,13 @@ def cmd_push(
         raise typer.Exit(0)
 
     # Confirm / Edit / Cancel
-    action = _Prompt.ask(
-        "[bold cyan]Action[/bold cyan]",
+    action = questionary.select(
+        "Action",
         choices=["confirm", "edit", "cancel"],
         default="confirm",
-    ) if not no_confirm else "confirm"
+    ).ask() if not no_confirm else "confirm"
 
-    if action == "cancel":
+    if not action or action == "cancel":
         _c.print("[dim]Cancelled.[/dim]")
         raise typer.Exit(0)
 
@@ -246,15 +261,15 @@ def cmd_sync(
     [bold green]Fetch + rebase. Explains merge conflicts with AI.[/bold green]
     """
     _ensure_configured()
-    from gitwise import git_ops
-    from gitwise.ai import ask_ai
-    from gitwise.utils import success_panel, error_panel, ai_panel, warning_panel
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.utils import success_panel, error_panel, ai_panel, warning_panel
     from git import GitCommandError
 
     repo = git_ops.get_repo()
 
     if dry_run:
-        from gitwise.utils import info_panel
+        from gitdude.utils import info_panel
         info_panel("Would run: git fetch && git pull --rebase", title="🧪 Dry Run")
         raise typer.Exit(0)
 
@@ -299,9 +314,9 @@ def cmd_back(
     [bold green]Interactively travel back in commit history.[/bold green]
     """
     _ensure_configured()
-    from gitwise import git_ops
-    from gitwise.ai import ask_ai
-    from gitwise.utils import (
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.utils import (
         print_commit_table, ai_panel, confirm, ask,
         error_panel, success_panel, pick_number
     )
@@ -312,7 +327,7 @@ def cmd_back(
     commits = git_ops.get_recent_commits(repo, n=30)
 
     if not commits:
-        from gitwise.utils import warning_panel
+        from gitdude.utils import warning_panel
         warning_panel("No commits found in this repository.", title="⚠️  Empty History")
         raise typer.Exit(0)
 
@@ -325,11 +340,14 @@ def cmd_back(
     console.print(f"\n[bold]Selected:[/bold] {chosen['hash']} — {chosen['message']}")
 
     # Choose mode
-    mode = _P.ask(
-        "[bold cyan]Mode[/bold cyan]",
+    mode = questionary.select(
+        "Mode",
         choices=["soft", "hard", "checkout", "branch"],
         default="soft",
-    )
+    ).ask()
+
+    if not mode:
+        return
 
     # AI explanation
     mode_prompts = {
@@ -347,12 +365,12 @@ def cmd_back(
     ai_panel(explanation, title=f"🤖 What '{mode}' will do")
 
     if dry_run:
-        from gitwise.utils import info_panel
+        from gitdude.utils import info_panel
         info_panel(f"Would execute: git {'reset --' + mode if mode in ('soft','hard') else 'checkout'} {chosen['hash']}", title="🧪 Dry Run")
         raise typer.Exit(0)
 
     if mode == "hard":
-        from gitwise.utils import danger_panel
+        from gitdude.utils import danger_panel
         danger_panel(
             f"Hard reset to [bold]{chosen['hash']}[/bold] will [bold red]permanently discard[/bold red] all changes after this commit.",
             title="🚨 Destructive Operation",
@@ -393,9 +411,9 @@ def cmd_undo(
     Example: gitdude undo "I accidentally committed my .env file"
     """
     _ensure_configured()
-    from gitwise import git_ops
-    from gitwise.ai import ask_ai
-    from gitwise.utils import ai_panel, warning_panel, error_panel, success_panel, confirm, danger_panel
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.utils import ai_panel, warning_panel, error_panel, success_panel, confirm, danger_panel
     from git import GitCommandError
 
     repo = git_ops.get_repo()
@@ -428,7 +446,7 @@ def cmd_undo(
     ai_panel(explanation, title="🤖 Diagnosis & Recovery Plan")
 
     if commands:
-        from gitwise.utils import print_command_table
+        from gitdude.utils import print_command_table
         print_command_table(commands, title="Recovery Commands")
 
         destructive_keywords = {"--hard", "--force", "-f", "reset", "rm", "clean"}
@@ -440,7 +458,7 @@ def cmd_undo(
             )
 
         if dry_run:
-            from gitwise.utils import info_panel
+            from gitdude.utils import info_panel
             info_panel("Dry run — no commands executed.", title="🧪 Dry Run")
             raise typer.Exit(0)
 
@@ -472,9 +490,9 @@ def cmd_do(
     Example: gitdude do "stash my changes, switch to main, pull latest"
     """
     _ensure_configured()
-    from gitwise import git_ops
-    from gitwise.ai import ask_ai
-    from gitwise.utils import (
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.utils import (
         ai_panel, print_command_table, error_panel, success_panel,
         confirm, info_panel, warning_panel
     )
@@ -506,7 +524,7 @@ def cmd_do(
     warnings = [l.replace("WARNING:", "").strip() for l in lines if l.strip().startswith("WARNING:")]
 
     if not commands:
-        from gitwise.utils import warning_panel
+        from gitdude.utils import warning_panel
         warning_panel(
             f"AI could not determine git commands for:\n[italic]{request}[/italic]\n\nRaw response:\n{raw}",
             title="⚠️  No Commands Generated",
@@ -516,7 +534,7 @@ def cmd_do(
     print_command_table(commands, title="Git Commands to Execute")
 
     if warnings:
-        from gitwise.utils import warning_panel as wp
+        from gitdude.utils import warning_panel as wp
         wp("\n".join(f"• {w}" for w in warnings), title="⚠️  AI Warnings")
 
     if dry_run:
@@ -552,35 +570,62 @@ def cmd_do(
 @app.command("review")
 def cmd_review(
     base: str = typer.Option("", "--base", help="Base branch to compare against (default: main/master)"),
+    local: bool = typer.Option(False, "--local", help="Review only local uncommitted changes"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show diff only, don't call AI"),
 ):
     """
     [bold green]AI pre-push code review: bugs, security, quality.[/bold green]
     """
     _ensure_configured()
-    from gitwise import git_ops
-    from gitwise.ai import ask_ai
-    from gitwise.config import get_config
-    from gitwise.utils import ai_panel, info_panel, warning_panel, error_panel
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.config import get_config
+    from gitdude.utils import ai_panel, info_panel, warning_panel, error_panel
 
     repo = git_ops.get_repo()
     cfg = get_config()
     base_branch = base or cfg.get("default_branch", "main")
 
-    diff = git_ops.get_branch_vs_main_diff(repo, base_branch)
+    diff = ""
+    mode_label = ""
+
+    if local:
+        diff = git_ops.get_all_diff(repo)
+        if not diff:
+            diff = git_ops.get_diff_unstaged(repo)
+        mode_label = "local changes"
+    else:
+        # Try branch diff first
+        diff = git_ops.get_branch_vs_main_diff(repo, base_branch)
+        mode_label = f"diff vs {base_branch}"
+        
+        # Fallback to local if branch diff is empty (common on main branch)
+        if not diff.strip():
+            local_diff = git_ops.get_all_diff(repo)
+            if not local_diff:
+                local_diff = git_ops.get_diff_unstaged(repo)
+            
+            if local_diff.strip():
+                diff = local_diff
+                mode_label = "local uncommitted changes (no branch diff found)"
+
     if not diff.strip():
-        warning_panel(f"No diff found between current branch and [bold]{base_branch}[/bold].", title="⚠️  Nothing to Review")
+        warning_panel(
+            f"No changes found to review ({mode_label}).\n"
+            "Stage some changes or commit them to a branch first.",
+            title="⚠️  Nothing to Review"
+        )
         raise typer.Exit(0)
 
     if dry_run:
-        info_panel(f"Would review diff vs [bold]{base_branch}[/bold] ({len(diff)} chars).", title="🧪 Dry Run")
+        info_panel(f"Would review {mode_label} ({len(diff)} chars).", title="🧪 Dry Run")
         console.print(f"[dim]{diff[:2000]}[/dim]")
         raise typer.Exit(0)
 
     prompt = (
         f"You are a senior software engineer performing a pre-push code review.\n"
-        f"Review the following git diff and produce a structured report.\n\n"
-        f"Diff (vs {base_branch}):\n{diff[:10000]}\n\n"
+        f"Review the following code changes ({mode_label}) and produce a structured report.\n\n"
+        f"Diff:\n{diff[:10000]}\n\n"
         "Structure your report as:\n\n"
         "## Summary\n(one line of what changed)\n\n"
         "## ⚠️ Potential Bugs\n(list items, or 'None found')\n\n"
@@ -609,10 +654,10 @@ def cmd_pr(
     [bold green]Generate a PR title + description, copy to clipboard.[/bold green]
     """
     _ensure_configured()
-    from gitwise import git_ops
-    from gitwise.ai import ask_ai
-    from gitwise.config import get_config
-    from gitwise.utils import ai_panel, info_panel, warning_panel, success_panel
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.config import get_config
+    from gitdude.utils import ai_panel, info_panel, warning_panel, success_panel
 
     repo = git_ops.get_repo()
     cfg = get_config()
@@ -670,9 +715,9 @@ def cmd_explain():
     [bold green]AI explains your last 5 git operations in plain English.[/bold green]
     """
     _ensure_configured()
-    from gitwise import git_ops
-    from gitwise.ai import ask_ai
-    from gitwise.utils import ai_panel
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.utils import ai_panel
 
     repo = git_ops.get_repo()
     reflog = git_ops.get_reflog(repo, n=5)
@@ -704,9 +749,9 @@ def cmd_whoops(
     [bold red]Emergency recovery — AI diagnoses what went wrong.[/bold red]
     """
     _ensure_configured()
-    from gitwise import git_ops
-    from gitwise.ai import ask_ai
-    from gitwise.utils import (
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.utils import (
         ai_panel, danger_panel, print_command_table, confirm,
         error_panel, success_panel, info_panel
     )
@@ -716,7 +761,7 @@ def cmd_whoops(
     log = git_ops.get_log_oneline(repo, n=10)
     reflog = git_ops.get_reflog(repo, n=10)
 
-    from gitwise.utils import warning_panel
+    from gitdude.utils import warning_panel
     warning_panel(
         "Gathering diagnostic info and consulting AI...\nThis will NOT make any changes yet.",
         title="🚨 Emergency Recovery Mode",
@@ -781,10 +826,10 @@ def cmd_config(
     """
     [bold green]Interactive configuration setup for GitDude.[/bold green]
     """
-    from gitwise.config import (
+    from gitdude.config import (
         get_config, save_config, CONFIG_FILE, mask_key, PROVIDERS
     )
-    from gitwise.utils import info_panel, success_panel, print_key_value, divider, warning_panel
+    from gitdude.utils import info_panel, success_panel, print_key_value, divider, warning_panel
 
     if reset:
         if CONFIG_FILE.exists():
