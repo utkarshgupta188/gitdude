@@ -860,6 +860,193 @@ def cmd_config(
 
 
 # ---------------------------------------------------------------------------
+# branch — AI branch naming
+# ---------------------------------------------------------------------------
+
+@app.command("branch")
+def cmd_branch(
+    description: str = typer.Argument(..., help="Plain-English description of what the branch is for"),
+):
+    """
+    [bold green]Generate a clean branch name from a description.[/bold green]
+    """
+    _ensure_configured()
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.utils import ai_panel, success_panel, warning_panel
+
+    repo = git_ops.get_repo()
+
+    prompt = (
+        "You are an expert at naming git branches.\n"
+        "Given the following description, generate a single clean branch name.\n\n"
+        "Rules:\n"
+        "- Use the format: type/short-descriptive-slug\n"
+        "- Types: feat, fix, chore, docs, refactor, test, hotfix\n"
+        "- Use lowercase, hyphens only, no spaces or special characters\n"
+        "- Keep it short (max 5 words in the slug)\n"
+        "- Respond with ONLY the branch name. No explanation, no quotes.\n\n"
+        f"Description: {description}"
+    )
+
+    branch_name = ask_ai(prompt, spinner_msg="🧠 Generating branch name...")
+    branch_name = branch_name.strip().strip('"').strip("'").replace(" ", "-").lower()
+
+    ai_panel(f"[bold]{branch_name}[/bold]", title="🌿 Suggested Branch Name")
+
+    action = questionary.select(
+        "Action",
+        choices=["create branch", "edit name", "cancel"],
+        default="create branch",
+    ).ask()
+
+    if not action or action == "cancel":
+        console.print("[dim]Cancelled.[/dim]")
+        raise typer.Exit(0)
+
+    if action == "edit name":
+        branch_name = questionary.text("Branch name:", default=branch_name).ask()
+        if not branch_name:
+            console.print("[dim]Cancelled.[/dim]")
+            raise typer.Exit(0)
+
+    try:
+        repo.git.checkout("-b", branch_name)
+        success_panel(f"Switched to new branch [bold]{branch_name}[/bold]", title="🌿 Branch Created")
+    except Exception as e:
+        warning_panel(f"Could not create branch: {e}", title="⚠️  Error")
+
+
+# ---------------------------------------------------------------------------
+# split — Smart commit splitter
+# ---------------------------------------------------------------------------
+
+@app.command("split")
+def cmd_split():
+    """
+    [bold green]AI-guided splitting of messy changes into logical commits.[/bold green]
+    """
+    _ensure_configured()
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.utils import ai_panel, success_panel, warning_panel, info_panel, console as _c
+    import json
+
+    repo = git_ops.get_repo()
+
+    # Gather all changed files
+    changed = git_ops.get_changed_files(repo)
+    if not changed:
+        warning_panel("No changes detected. Nothing to split.", title="⚠️  Nothing to Split")
+        raise typer.Exit(0)
+
+    # Get the full diff for AI context
+    diff_text = git_ops.get_all_diff(repo)
+    untracked_diff = git_ops.get_untracked_diff(repo)
+    if untracked_diff:
+        diff_text += "\n" + untracked_diff
+
+    file_list = "\n".join(f"- {f}" for f in changed)
+
+    prompt = (
+        "You are an expert at organizing git commits.\n"
+        "Given the following list of changed files and their diff, group them into logical commits.\n\n"
+        "Rules:\n"
+        "- Each group should represent ONE logical change (a feature, a fix, a refactor, etc.)\n"
+        "- Provide a conventional commit message for each group\n"
+        "- Respond in STRICT JSON format, nothing else\n"
+        "- Format: [{\"message\": \"feat: add X\", \"files\": [\"path/to/file1\", \"path/to/file2\"]}, ...]\n\n"
+        f"Changed files:\n{file_list}\n\n"
+        f"Diff:\n{diff_text[:8000]}"
+    )
+
+    raw = ask_ai(prompt, spinner_msg="🧠 Analyzing changes...")
+
+    # Parse AI response
+    try:
+        # Extract JSON from response (AI might wrap it in markdown)
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1]
+            raw = raw.rsplit("```", 1)[0]
+        groups = json.loads(raw.strip())
+    except (json.JSONDecodeError, IndexError):
+        warning_panel("AI returned an unexpected format. Showing raw response:", title="⚠️  Parse Error")
+        _c.print(f"[dim]{raw[:2000]}[/dim]")
+        raise typer.Exit(1)
+
+    # Display the groups
+    for i, g in enumerate(groups, 1):
+        files_str = "\n".join(f"  • {f}" for f in g.get("files", []))
+        ai_panel(f"[bold]{g.get('message', 'No message')}[/bold]\n{files_str}", title=f"📦 Group {i}")
+
+    # Let user commit groups one by one
+    for i, g in enumerate(groups, 1):
+        action = questionary.select(
+            f"Commit group {i}: {g.get('message', '')}?",
+            choices=["commit", "skip", "stop"],
+            default="commit",
+        ).ask()
+
+        if not action or action == "stop":
+            _c.print("[dim]Stopped.[/dim]")
+            break
+
+        if action == "skip":
+            continue
+
+        files = g.get("files", [])
+        msg = g.get("message", "chore: update")
+
+        try:
+            git_ops.stage_files(repo, files)
+            repo.index.commit(msg)
+            success_panel(f"[bold]{msg}[/bold]\n({len(files)} file(s))", title=f"✅ Committed Group {i}")
+        except Exception as e:
+            warning_panel(f"Error committing group {i}: {e}", title="⚠️  Error")
+
+
+# ---------------------------------------------------------------------------
+# chat — Ask your codebase
+# ---------------------------------------------------------------------------
+
+@app.command("chat")
+def cmd_chat(
+    question: str = typer.Argument(..., help="Your question about the codebase"),
+):
+    """
+    [bold green]Ask AI questions about your codebase.[/bold green]
+    """
+    _ensure_configured()
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.utils import ai_panel
+
+    repo = git_ops.get_repo()
+    status = git_ops.get_status(repo)
+    tree = git_ops.get_file_tree(repo)
+    recent_log = git_ops.get_log(repo, count=10)
+
+    # Read key files for context
+    key_files = ["README.md", "readme.md", "pyproject.toml", "package.json", "Cargo.toml", "go.mod"]
+    file_context = git_ops.read_file_contents(repo, key_files)
+
+    prompt = (
+        "You are a helpful senior software engineer who knows this codebase intimately.\n"
+        "Answer the user's question based on the project context provided below.\n"
+        "Be specific, reference file names and functions when possible.\n\n"
+        f"## Project File Tree\n{tree}\n\n"
+        f"## Git Status\n{status}\n\n"
+        f"## Recent Commits\n{recent_log}\n\n"
+        f"## Key Files\n{file_context}\n\n"
+        f"## User Question\n{question}"
+    )
+
+    answer = ask_ai(prompt, spinner_msg="🧠 Thinking about your codebase...")
+    ai_panel(answer, title="💬 Answer")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

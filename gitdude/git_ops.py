@@ -248,3 +248,91 @@ def stash(repo: Repo) -> str:
 
 def stash_pop(repo: Repo) -> str:
     return repo.git.stash("pop")
+
+
+# ---------------------------------------------------------------------------
+# Helpers for split, chat commands
+# ---------------------------------------------------------------------------
+
+def get_changed_files(repo: Repo) -> list[str]:
+    """Return a list of all modified, added, deleted, and untracked file paths."""
+    files = set()
+
+    if has_commits(repo):
+        # Staged changes
+        for item in repo.index.diff("HEAD"):
+            files.add(item.a_path)
+            if item.b_path:
+                files.add(item.b_path)
+
+        # Unstaged changes
+        for item in repo.index.diff(None):
+            files.add(item.a_path)
+            if item.b_path:
+                files.add(item.b_path)
+
+    # Untracked files
+    for f in repo.untracked_files:
+        files.add(f)
+
+    return sorted(files)
+
+
+def stage_files(repo: Repo, file_list: list[str]) -> None:
+    """Stage specific files by path."""
+    for f in file_list:
+        full_path = Path(repo.working_dir) / f
+        if full_path.exists():
+            repo.index.add([f])
+        else:
+            # File was deleted
+            try:
+                repo.index.remove([f])
+            except Exception:
+                pass
+
+
+def get_file_tree(repo: Repo, max_depth: int = 3) -> str:
+    """Return a directory tree listing of the repo, ignoring common junk."""
+    ignore = {".git", "__pycache__", "node_modules", ".venv", "venv", "dist", "build", ".egg-info"}
+    lines = []
+
+    def _walk(directory: Path, prefix: str, depth: int):
+        if depth > max_depth:
+            return
+        try:
+            entries = sorted(directory.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except PermissionError:
+            return
+        for entry in entries:
+            if entry.name in ignore:
+                continue
+            if entry.is_dir():
+                lines.append(f"{prefix}📁 {entry.name}/")
+                _walk(entry, prefix + "  ", depth + 1)
+            else:
+                lines.append(f"{prefix}📄 {entry.name}")
+
+    root = Path(repo.working_dir)
+    lines.append(f"📁 {root.name}/")
+    _walk(root, "  ", 1)
+    return "\n".join(lines[:200])  # Cap output
+
+
+def read_file_contents(repo: Repo, paths: list[str], max_chars: int = 5000) -> str:
+    """Read the content of specific files from the repo root, if they exist."""
+    parts = []
+    root = Path(repo.working_dir)
+    total = 0
+    for p in paths:
+        full = root / p
+        if full.is_file() and total < max_chars:
+            try:
+                content = full.read_text(encoding="utf-8", errors="replace")
+                chunk = content[:max_chars - total]
+                parts.append(f"### {p}\n```\n{chunk}\n```")
+                total += len(chunk)
+            except Exception:
+                continue
+    return "\n\n".join(parts) if parts else "(no key files found)"
+
