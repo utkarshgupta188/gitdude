@@ -250,6 +250,17 @@ def stash_pop(repo: Repo) -> str:
     return repo.git.stash("pop")
 
 
+def get_log(repo: Repo, count: int = 10) -> str:
+    """Return the last N commit log entries as a compact string."""
+    if not has_commits(repo):
+        return "(no commits yet)"
+    try:
+        return repo.git.log(f"--oneline", f"-{count}", "--no-color")
+    except GitCommandError:
+        return "(unable to read log)"
+
+
+
 # ---------------------------------------------------------------------------
 # Helpers for split, chat commands
 # ---------------------------------------------------------------------------
