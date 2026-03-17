@@ -14,6 +14,9 @@
 - 🤖 **Multi-provider AI** — Gemini (default, free), Groq (fastest), Ollama (100% local), OpenAI
 - 💬 **Natural language commands** — `gitdude do "stash, switch to main, pull"`
 - 🔍 **AI code review** — bugs, security issues, quality flags before you push
+- 🌿 **Smart branch naming** — `gitdude branch "fix login problem"`
+- ✂️ **Commit splitting** — `gitdude split` messy changes into logical commits
+- 💬 **Codebase chat** — `gitdude chat "how does X work?"`
 - 🚑 **Emergency recovery** — `gitdude whoops` diagnoses and fixes git disasters
 - 📋 **PR generation** — full GitHub PR description, auto-copied to clipboard
 - 🎨 **Beautiful Rich UI** — tables, panels, spinners, color-coded output
@@ -33,10 +36,13 @@ gitdude config
 # 3. Generate an AI commit message and push
 gitdude push
 
-# 4. Review your code before merging
+# 4. Ask about your code
+gitdude chat "what does this project do?"
+
+# 5. Review your code before merging
 gitdude review
 
-# 5. Something went wrong? Ask for help
+# 6. Something went wrong? Ask for help
 gitdude whoops
 ```
 
@@ -155,6 +161,41 @@ gitdude review --dry-run          # Show diff without AI review
 ```
 
 **Review sections:** Summary · ⚠️ Potential Bugs · 🔒 Security Issues · 📏 Code Quality · 🔍 Things to Check · ✅ Overall Assessment
+
+---
+
+### `gitdude branch "<description>"`
+
+AI-generates a clean, conventional branch name from your description.
+
+```bash
+gitdude branch "fix the login timeout bug"
+# → Suggests: fix/login-timeout-bug
+# → Prompts: create branch / edit name / cancel
+```
+
+---
+
+### `gitdude split`
+
+The ultimate tool for messy working trees. AI analyzes all your changes and groups them into logical, atomic commits.
+
+```bash
+gitdude split
+# → Groups files + generates commit messages
+# → Interactive loop to commit each group one-by-one
+```
+
+---
+
+### `gitdude chat "<question>"`
+
+Ask questions about your codebase. It reads your file tree, README, and recent history to provide specific answers.
+
+```bash
+gitdude chat "how do I add a new command to this app?"
+gitdude chat "where is the AI provider logic located?"
+```
 
 ---
 
