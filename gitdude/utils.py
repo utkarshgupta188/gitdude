@@ -148,3 +148,18 @@ def divider() -> None:
 
 def print_key_value(key: str, value: str) -> None:
     console.print(f"  [bold cyan]{key}:[/bold cyan] {value}")
+
+
+from questionary import Style
+custom_style = Style([
+    ('qmark', 'fg:#5F819D bold'),
+    ('question', 'bold'),
+    ('answer', 'fg:#FF9D00 bold'),
+    ('pointer', 'fg:#FF9D00 bold'),
+    ('highlighted', 'fg:#00FFFF bold'),  # No bright background, just colored text
+    ('selected', 'fg:#CC5454'),
+    ('separator', 'fg:#6C6C6C'),
+    ('instruction', ''),
+    ('text', ''),
+    ('disabled', 'fg:#858585 italic')
+])

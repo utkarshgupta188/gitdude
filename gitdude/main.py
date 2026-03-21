@@ -17,8 +17,7 @@ app = typer.Typer(
     help="🧠 GitDude — AI-powered Git workflow assistant",
     add_completion=True,
     rich_markup_mode="rich",
-    no_args_is_help=True,
-)
+    no_args_is_help=True)
 
 console = Console()
 
@@ -43,7 +42,7 @@ def _run_interactive_config() -> None:
     from gitdude.config import (
         PROVIDERS, get_config, save_config, DEFAULTS, get_model_for_provider
     )
-    from gitdude.utils import success_panel, info_panel, divider
+    from gitdude.utils import custom_style, success_panel, info_panel, divider
 
     divider()
     console.print("[bold cyan]🔧 GitDude Configuration Setup[/bold cyan]")
@@ -55,8 +54,8 @@ def _run_interactive_config() -> None:
     provider = questionary.select(
         "Choose AI provider",
         choices=PROVIDERS,
-        default=existing.get("provider", "gemini"),
-    ).ask()
+        default=existing.get("provider", "groq"),
+        style=custom_style).ask()
 
     if not provider:  # Handle Ctrl+C
         raise typer.Exit(0)
@@ -74,8 +73,7 @@ def _run_interactive_config() -> None:
         api_key = Prompt.ask(
             f"[bold cyan]API Key for {provider}[/bold cyan]",
             default=existing_key,
-            password=True,
-        )
+            password=True)
     else:
         console.print("[dim]Ollama is local — no API key needed.[/dim]")
 
@@ -83,15 +81,13 @@ def _run_interactive_config() -> None:
     default_model = get_model_for_provider(provider)
     model = Prompt.ask(
         f"[bold cyan]Model name[/bold cyan] (default: {default_model})",
-        default=default_model,
-    )
+        default=default_model)
 
     # Default branch
-    default_branch = questionary.select(
-        "Default branch",
-        choices=["main", "master"],
+    default_branch = questionary.text(
+        "Default branch (e.g. main, master, or custom)",
         default=existing.get("default_branch", "main"),
-    ).ask()
+        style=custom_style).ask()
 
     if not default_branch:
         raise typer.Exit(0)
@@ -101,7 +97,7 @@ def _run_interactive_config() -> None:
         "Commit message style",
         choices=["conventional", "freeform"],
         default=existing.get("commit_style", "conventional"),
-    ).ask()
+        style=custom_style).ask()
 
     if not commit_style:
         raise typer.Exit(0)
@@ -124,8 +120,7 @@ def _run_interactive_config() -> None:
         f"Model: [bold]{model}[/bold]\n"
         f"Default branch: [bold]{default_branch}[/bold]\n"
         f"Commit style: [bold]{commit_style}[/bold]",
-        title="✅ Configuration Saved",
-    )
+        title="✅ Configuration Saved")
 
 
 # ---------------------------------------------------------------------------
@@ -136,8 +131,7 @@ def _run_interactive_config() -> None:
 def cmd_push(
     no_confirm: bool = typer.Option(False, "--no-confirm", help="Skip confirmation prompt"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute"),
-    style: str = typer.Option("", "--style", help="Commit style: conventional or freeform"),
-):
+    style: str = typer.Option("", "--style", help="Commit style: conventional or freeform")):
     """
     [bold green]AI-generated commit message + push.[/bold green]
 
@@ -148,6 +142,7 @@ def cmd_push(
     from gitdude.ai import ask_ai
     from gitdude.config import get_config
     from gitdude.utils import (
+    custom_style,
         ai_panel, error_panel, success_panel, warning_panel,
         confirm, ask, info_panel, console as _c
     )
@@ -222,7 +217,7 @@ def cmd_push(
         "Action",
         choices=["confirm", "edit", "cancel"],
         default="confirm",
-    ).ask() if not no_confirm else "confirm"
+        style=custom_style).ask() if not no_confirm else "confirm"
 
     if not action or action == "cancel":
         _c.print("[dim]Cancelled.[/dim]")
@@ -242,8 +237,7 @@ def cmd_push(
         push_output = git_ops.push(repo)
         success_panel(
             f"Commit: [bold]{commit_msg}[/bold]\n{push_output}",
-            title="✅ Pushed Successfully",
-        )
+            title="✅ Pushed Successfully")
     except Exception as exc:  # noqa: BLE001
         error_panel(f"Push failed:\n{exc}", title="❌ Push Failed")
         raise typer.Exit(1)
@@ -255,15 +249,14 @@ def cmd_push(
 
 @app.command("sync")
 def cmd_sync(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute"),
-):
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute")):
     """
     [bold green]Fetch + rebase. Explains merge conflicts with AI.[/bold green]
     """
     _ensure_configured()
     from gitdude import git_ops
     from gitdude.ai import ask_ai
-    from gitdude.utils import success_panel, error_panel, ai_panel, warning_panel
+    from gitdude.utils import custom_style, success_panel, error_panel, ai_panel, warning_panel
     from git import GitCommandError
 
     repo = git_ops.get_repo()
@@ -308,8 +301,7 @@ def cmd_sync(
 
 @app.command("back")
 def cmd_back(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute"),
-):
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute")):
     """
     [bold green]Interactively travel back in commit history.[/bold green]
     """
@@ -317,6 +309,7 @@ def cmd_back(
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.utils import (
+    custom_style,
         print_commit_table, ai_panel, confirm, ask,
         error_panel, success_panel, pick_number
     )
@@ -344,7 +337,7 @@ def cmd_back(
         "Mode",
         choices=["soft", "hard", "checkout", "branch"],
         default="soft",
-    ).ask()
+        style=custom_style).ask()
 
     if not mode:
         return
@@ -373,8 +366,7 @@ def cmd_back(
         from gitdude.utils import danger_panel
         danger_panel(
             f"Hard reset to [bold]{chosen['hash']}[/bold] will [bold red]permanently discard[/bold red] all changes after this commit.",
-            title="🚨 Destructive Operation",
-        )
+            title="🚨 Destructive Operation")
 
     if not confirm("Proceed?", default=False if mode == "hard" else True):
         console.print("[dim]Cancelled.[/dim]")
@@ -403,8 +395,7 @@ def cmd_back(
 @app.command("undo")
 def cmd_undo(
     description: str = typer.Argument(..., help='Describe what went wrong, e.g. "I committed my .env file"'),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute"),
-):
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute")):
     """
     [bold green]AI diagnoses your git mistake and gives recovery steps.[/bold green]
 
@@ -413,7 +404,7 @@ def cmd_undo(
     _ensure_configured()
     from gitdude import git_ops
     from gitdude.ai import ask_ai
-    from gitdude.utils import ai_panel, warning_panel, error_panel, success_panel, confirm, danger_panel
+    from gitdude.utils import custom_style, ai_panel, warning_panel, error_panel, success_panel, confirm, danger_panel
     from git import GitCommandError
 
     repo = git_ops.get_repo()
@@ -454,8 +445,7 @@ def cmd_undo(
         if is_destructive:
             danger_panel(
                 "One or more recovery commands are [bold red]destructive[/bold red] and cannot be undone.\nReview carefully before confirming.",
-                title="🚨 Destructive Warning",
-            )
+                title="🚨 Destructive Warning")
 
         if dry_run:
             from gitdude.utils import info_panel
@@ -482,8 +472,7 @@ def cmd_undo(
 @app.command("do")
 def cmd_do(
     request: str = typer.Argument(..., help='Natural language git request, e.g. "stash my changes and switch to main"'),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute"),
-):
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute")):
     """
     [bold green]Execute git operations from natural language.[/bold green]
 
@@ -493,6 +482,7 @@ def cmd_do(
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.utils import (
+    custom_style,
         ai_panel, print_command_table, error_panel, success_panel,
         confirm, info_panel, warning_panel
     )
@@ -527,8 +517,7 @@ def cmd_do(
         from gitdude.utils import warning_panel
         warning_panel(
             f"AI could not determine git commands for:\n[italic]{request}[/italic]\n\nRaw response:\n{raw}",
-            title="⚠️  No Commands Generated",
-        )
+            title="⚠️  No Commands Generated")
         raise typer.Exit(1)
 
     print_command_table(commands, title="Git Commands to Execute")
@@ -571,8 +560,7 @@ def cmd_do(
 def cmd_review(
     base: str = typer.Option("", "--base", help="Base branch to compare against (default: main/master)"),
     local: bool = typer.Option(False, "--local", help="Review only local uncommitted changes"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show diff only, don't call AI"),
-):
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show diff only, don't call AI")):
     """
     [bold green]AI pre-push code review: bugs, security, quality.[/bold green]
     """
@@ -580,7 +568,7 @@ def cmd_review(
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.config import get_config
-    from gitdude.utils import ai_panel, info_panel, warning_panel, error_panel
+    from gitdude.utils import custom_style, ai_panel, info_panel, warning_panel, error_panel
 
     repo = git_ops.get_repo()
     cfg = get_config()
@@ -648,8 +636,7 @@ def cmd_review(
 def cmd_pr(
     base: str = typer.Option("", "--base", help="Base branch to compare against"),
     no_copy: bool = typer.Option(False, "--no-copy", help="Don't copy to clipboard"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show diff only"),
-):
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show diff only")):
     """
     [bold green]Generate a PR title + description, copy to clipboard.[/bold green]
     """
@@ -657,7 +644,7 @@ def cmd_pr(
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.config import get_config
-    from gitdude.utils import ai_panel, info_panel, warning_panel, success_panel
+    from gitdude.utils import custom_style, ai_panel, info_panel, warning_panel, success_panel
 
     repo = git_ops.get_repo()
     cfg = get_config()
@@ -701,8 +688,7 @@ def cmd_pr(
         except Exception:  # noqa: BLE001
             warning_panel(
                 "Could not copy to clipboard. Run [bold]pip install pyperclip[/bold] or check your system clipboard support.",
-                title="⚠️  Clipboard Unavailable",
-            )
+                title="⚠️  Clipboard Unavailable")
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +703,7 @@ def cmd_explain():
     _ensure_configured()
     from gitdude import git_ops
     from gitdude.ai import ask_ai
-    from gitdude.utils import ai_panel
+    from gitdude.utils import custom_style, ai_panel
 
     repo = git_ops.get_repo()
     reflog = git_ops.get_reflog(repo, n=5)
@@ -743,8 +729,7 @@ def cmd_explain():
 
 @app.command("whoops")
 def cmd_whoops(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show diagnosis only, don't execute"),
-):
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show diagnosis only, don't execute")):
     """
     [bold red]Emergency recovery — AI diagnoses what went wrong.[/bold red]
     """
@@ -752,6 +737,7 @@ def cmd_whoops(
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.utils import (
+    custom_style,
         ai_panel, danger_panel, print_command_table, confirm,
         error_panel, success_panel, info_panel
     )
@@ -764,8 +750,7 @@ def cmd_whoops(
     from gitdude.utils import warning_panel
     warning_panel(
         "Gathering diagnostic info and consulting AI...\nThis will NOT make any changes yet.",
-        title="🚨 Emergency Recovery Mode",
-    )
+        title="🚨 Emergency Recovery Mode")
 
     prompt = (
         "A developer is in trouble with their git repository. Diagnose what went wrong and provide recovery steps.\n\n"
@@ -821,8 +806,7 @@ def cmd_whoops(
 @app.command("config")
 def cmd_config(
     show: bool = typer.Option(False, "--show", help="Print current config (API keys masked)"),
-    reset: bool = typer.Option(False, "--reset", help="Wipe config and re-run setup"),
-):
+    reset: bool = typer.Option(False, "--reset", help="Wipe config and re-run setup")):
     """
     [bold green]Interactive configuration setup for GitDude.[/bold green]
     """
@@ -865,15 +849,14 @@ def cmd_config(
 
 @app.command("branch")
 def cmd_branch(
-    description: str = typer.Argument(..., help="Plain-English description of what the branch is for"),
-):
+    description: str = typer.Argument(..., help="Plain-English description of what the branch is for")):
     """
     [bold green]Generate a clean branch name from a description.[/bold green]
     """
     _ensure_configured()
     from gitdude import git_ops
     from gitdude.ai import ask_ai
-    from gitdude.utils import ai_panel, success_panel, warning_panel
+    from gitdude.utils import custom_style, ai_panel, success_panel, warning_panel
 
     repo = git_ops.get_repo()
 
@@ -898,14 +881,15 @@ def cmd_branch(
         "Action",
         choices=["create branch", "edit name", "cancel"],
         default="create branch",
-    ).ask()
+        style=custom_style).ask()
 
     if not action or action == "cancel":
         console.print("[dim]Cancelled.[/dim]")
         raise typer.Exit(0)
 
     if action == "edit name":
-        branch_name = questionary.text("Branch name:", default=branch_name).ask()
+        branch_name = questionary.text("Branch name:", default=branch_name,
+        style=custom_style).ask()
         if not branch_name:
             console.print("[dim]Cancelled.[/dim]")
             raise typer.Exit(0)
@@ -929,7 +913,7 @@ def cmd_split():
     _ensure_configured()
     from gitdude import git_ops
     from gitdude.ai import ask_ai
-    from gitdude.utils import ai_panel, success_panel, warning_panel, info_panel, console as _c
+    from gitdude.utils import custom_style, ai_panel, success_panel, warning_panel, info_panel, console as _c
     import json
 
     repo = git_ops.get_repo()
@@ -986,7 +970,7 @@ def cmd_split():
             f"Commit group {i}: {g.get('message', '')}?",
             choices=["commit", "skip", "stop"],
             default="commit",
-        ).ask()
+        style=custom_style).ask()
 
         if not action or action == "stop":
             _c.print("[dim]Stopped.[/dim]")
@@ -1012,15 +996,14 @@ def cmd_split():
 
 @app.command("chat")
 def cmd_chat(
-    question: str = typer.Argument(..., help="Your question about the codebase"),
-):
+    question: str = typer.Argument(..., help="Your question about the codebase")):
     """
     [bold green]Ask AI questions about your codebase.[/bold green]
     """
     _ensure_configured()
     from gitdude import git_ops
     from gitdude.ai import ask_ai
-    from gitdude.utils import ai_panel
+    from gitdude.utils import custom_style, ai_panel
 
     repo = git_ops.get_repo()
     status = git_ops.get_status(repo)

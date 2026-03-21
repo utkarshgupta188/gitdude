@@ -13,12 +13,12 @@ from typing import Any
 CONFIG_DIR = Path.home() / ".gitdude"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-PROVIDERS = ["gemini", "groq", "ollama", "openai"]
+PROVIDERS = ["groq", "gemini", "ollama", "openai"]
 
 DEFAULTS: dict[str, Any] = {
-    "provider": "gemini",
+    "provider": "groq",
     "model": {
-        "gemini": "gemini-2.0-flash",
+        "gemini": "gemini-2.5-flash",
         "groq": "llama-3.3-70b-versatile",
         "ollama": "llama3",
         "openai": "gpt-4o-mini",
