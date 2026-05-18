@@ -232,6 +232,7 @@ def cmd_push(
         info_panel("Dry run mode — no changes made.", title="🧪 Dry Run")
         raise typer.Exit(0)
 
+    import questionary
     # Confirm / Edit / Cancel
     action = questionary.select(
         "Action",
@@ -244,8 +245,11 @@ def cmd_push(
         raise typer.Exit(0)
 
     if action == "edit":
-        edited_msg = typer.edit(commit_msg)
-        if edited_msg is not None:
+        edited_msg = questionary.text(
+            "Edit commit message",
+            default=commit_msg,
+            style=custom_style).ask()
+        if edited_msg:
             commit_msg = edited_msg.strip()
 
     try:
