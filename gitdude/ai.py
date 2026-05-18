@@ -8,7 +8,7 @@ Supports: gemini, groq, ollama, openai
 from __future__ import annotations
 
 import sys
-from typing import Optional
+from typing import Optional, Iterator
 
 from rich.console import Console
 from rich.live import Live
@@ -34,7 +34,7 @@ def _spinner_context(message: str = "🤖 Thinking..."):
 # Provider implementations
 # ---------------------------------------------------------------------------
 
-def _ask_gemini(prompt: str, model: str, api_key: str) -> str:
+def _ask_gemini(prompt: str, model: str, api_key: str, stream: bool = False) -> str | Iterator[str]:
     try:
         import google.generativeai as genai  # type: ignore
     except ImportError:
@@ -43,53 +43,113 @@ def _ask_gemini(prompt: str, model: str, api_key: str) -> str:
         )
     genai.configure(api_key=api_key)
     client = genai.GenerativeModel(model)
-    response = client.generate_content(prompt)
-    return response.text.strip()
+    
+    if stream:
+        response = client.generate_content(prompt, stream=True)
+        def _gen():
+            for chunk in response:
+                try:
+                    if chunk.text:
+                        yield chunk.text
+                except ValueError:
+                    yield "[Response blocked by safety filters]"
+        return _gen()
+    else:
+        response = client.generate_content(prompt)
+        try:
+            return response.text.strip()
+        except ValueError:
+            return "[Response blocked by safety filters]"
 
 
-def _ask_groq(prompt: str, model: str, api_key: str) -> str:
+def _ask_groq(prompt: str, model: str, api_key: str, stream: bool = False) -> str | Iterator[str]:
     try:
         from groq import Groq  # type: ignore
     except ImportError:
         raise RuntimeError("groq is not installed. Run: pip install groq")
-    client = Groq(api_key=api_key)
-    chat_completion = client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
-        model=model,
-    )
-    return chat_completion.choices[0].message.content.strip()
+    client = Groq(api_key=api_key, timeout=20.0)
+    
+    if stream:
+        completion = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            stream=True,
+        )
+        def _gen():
+            for chunk in completion:
+                content = chunk.choices[0].delta.content
+                if content:
+                    yield content
+        return _gen()
+    else:
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+        )
+        content = chat_completion.choices[0].message.content
+        return content.strip() if content else ""
 
 
-def _ask_ollama(prompt: str, model: str, **_kwargs) -> str:
+def _ask_ollama(prompt: str, model: str, stream: bool = False) -> str | Iterator[str]:
     try:
         import ollama  # type: ignore
     except ImportError:
         raise RuntimeError("ollama is not installed. Run: pip install ollama")
-    response = ollama.chat(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response["message"]["content"].strip()
+    
+    if stream:
+        response = ollama.chat(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+        )
+        def _gen():
+            for chunk in response:
+                content = chunk.get("message", {}).get("content", "")  # type: ignore
+                if content:
+                    yield content
+        return _gen()
+    else:
+        response = ollama.chat(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        content = response.get("message", {}).get("content", "")
+        return content.strip()
 
 
-def _ask_openai(prompt: str, model: str, api_key: str) -> str:
+def _ask_openai(prompt: str, model: str, api_key: str, stream: bool = False) -> str | Iterator[str]:
     try:
         from openai import OpenAI  # type: ignore
     except ImportError:
         raise RuntimeError("openai is not installed. Run: pip install openai")
-    client = OpenAI(api_key=api_key)
-    completion = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return completion.choices[0].message.content.strip()
+    client = OpenAI(api_key=api_key, timeout=20.0)
+    
+    if stream:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+        )
+        def _gen():
+            for chunk in completion:
+                content = chunk.choices[0].delta.content  # type: ignore
+                if content:
+                    yield content
+        return _gen()
+    else:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        content = completion.choices[0].message.content
+        return content.strip() if content else ""
 
 
 # ---------------------------------------------------------------------------
 # Public interface
 # ---------------------------------------------------------------------------
 
-def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...") -> str:
+def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...", stream: bool = False) -> str:
     """
     Send a prompt to the configured AI provider and return the response.
     Shows a Rich spinner while waiting.
@@ -109,7 +169,9 @@ def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...") -> str:
     model = get_model_for_provider(provider)
     api_key = get_provider_api_key(provider)
 
-    if provider != "ollama" and not api_key:
+    LOCAL_PROVIDERS = {"ollama"}
+
+    if provider not in LOCAL_PROVIDERS and not api_key:
         error_panel(
             f"No API key found for provider [bold]{provider}[/bold].\n"
             f"Run [bold cyan]gitdude config[/bold cyan] to set your key.",
@@ -117,25 +179,53 @@ def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...") -> str:
         )
         sys.exit(1)
 
-    provider_fn = {
-        "gemini": _ask_gemini,
-        "groq": _ask_groq,
-        "ollama": _ask_ollama,
-        "openai": _ask_openai,
-    }.get(provider)
-
-    if provider_fn is None:
-        error_panel(
-            f"Unknown provider: [bold]{provider}[/bold]\n"
-            f"Run [bold cyan]gitdude config[/bold cyan] to choose a valid provider.",
-            title="❌ Invalid Provider",
-        )
-        sys.exit(1)
-
     try:
-        with _spinner_context(spinner_msg):
-            result = provider_fn(prompt=prompt, model=model, api_key=api_key)
-        return result
+        if stream:
+            with _spinner_context(spinner_msg):
+                if provider == "gemini":
+                    res = _ask_gemini(prompt, model, api_key, stream=True)
+                elif provider == "groq":
+                    res = _ask_groq(prompt, model, api_key, stream=True)
+                elif provider == "openai":
+                    res = _ask_openai(prompt, model, api_key, stream=True)
+                elif provider == "ollama":
+                    res = _ask_ollama(prompt, model, stream=True)
+                else:
+                    raise RuntimeError(f"Unknown provider: {provider}")
+                
+                if isinstance(res, str):
+                    return res
+                
+                iterator = res
+                try:
+                    first_chunk = next(iterator)
+                except StopIteration:
+                    return ""
+            
+            console.print(first_chunk, end="")
+            full_text = first_chunk
+            
+            for chunk in iterator:
+                console.print(chunk, end="")
+                full_text += chunk
+            console.print()
+            return full_text
+        else:
+            with _spinner_context(spinner_msg):
+                if provider == "gemini":
+                    result = _ask_gemini(prompt, model, api_key, stream=False)
+                elif provider == "groq":
+                    result = _ask_groq(prompt, model, api_key, stream=False)
+                elif provider == "openai":
+                    result = _ask_openai(prompt, model, api_key, stream=False)
+                elif provider == "ollama":
+                    result = _ask_ollama(prompt, model, stream=False)
+                else:
+                    raise RuntimeError(f"Unknown provider: {provider}")
+            
+            if isinstance(result, str):
+                return result
+            raise RuntimeError("Expected string response from AI provider")
     except RuntimeError as exc:
         error_panel(str(exc), title="❌ AI Provider Error")
         sys.exit(1)
