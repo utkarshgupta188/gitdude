@@ -368,7 +368,129 @@ def cmd_commit(
     _shared_commit_flow(push=False, no_confirm=no_confirm, dry_run=dry_run, style=style)
 
 
-# ---------------------------------------------------------------------------
+@app.command("tag")
+def cmd_tag(
+    no_confirm: bool = typer.Option(False, "--no-confirm", help="Skip confirmation prompt"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute")
+):
+    """
+    [bold green]AI-powered release tagging.[/bold green]
+
+    Scans commits since last tag, suggests next version, and generates release notes.
+    """
+    _ensure_configured()
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.utils import custom_style, ai_panel, info_panel, success_panel, warning_panel, error_panel, ask, console as _c
+    import questionary
+
+    repo = git_ops.get_repo()
+    
+    # Get latest tag
+    latest_tag = git_ops.get_latest_tag(repo)
+    if not latest_tag:
+        _c.print("[dim]No tags found in the repository. Starting from v0.1.0.[/dim]")
+        base_ref = "HEAD" # Fallback if no tags
+        current_version = "0.1.0"
+    else:
+        _c.print(f"[dim]Latest tag found: [bold]{latest_tag}[/bold][/dim]")
+        base_ref = latest_tag
+        current_version = latest_tag.lstrip('v')
+
+    # Get commits since last tag
+    if base_ref == "HEAD":
+        # If no tags, just get last 10 commits
+        commits_log = git_ops.get_log_oneline(repo, n=10)
+    else:
+        commits_log = git_ops.get_commits_since(repo, base_ref)
+
+    if not commits_log.strip():
+        warning_panel("No commits found since the last tag. Nothing to release!", title="⚠️ No New Commits")
+        raise typer.Exit(0)
+
+    # Build prompt for AI
+    prompt = (
+        f"You are an expert software engineer generating release notes and suggesting a new version.\n\n"
+        f"Current version: {current_version}\n\n"
+        f"Here are the commits since the last release:\n{commits_log}\n\n"
+        f"Please:\n"
+        f"1. Suggest the next version number (Semantic Versioning: Major, Minor, or Patch).\n"
+        f"2. Write a concise, bulleted list of release notes summarizing the changes.\n\n"
+        f"Format your response EXACTLY like this:\n"
+        f"SUGGESTED_VERSION: X.Y.Z\n"
+        f"RELEASE_NOTES:\n"
+        f"* Change 1\n"
+        f"* Change 2"
+    )
+
+    _c.print("[dim]Analyzing commits and generating release notes...[/dim]")
+    try:
+        response = ask_ai(prompt, spinner_msg="🤖 Analyzing release...")
+        
+        # Parse response
+        lines = response.splitlines()
+        suggested_version = ""
+        release_notes = []
+        is_notes = False
+        
+        for line in lines:
+            if line.startswith("SUGGESTED_VERSION:"):
+                suggested_version = line.replace("SUGGESTED_VERSION:", "").strip()
+            elif line.startswith("RELEASE_NOTES:"):
+                is_notes = True
+            elif is_notes and line.strip():
+                release_notes.append(line.strip())
+                
+        if not suggested_version:
+            suggested_version = current_version # Fallback
+            
+        notes_text = "\n".join(release_notes).strip()
+        
+        # Show results
+        ai_panel(
+            f"Suggested Version: [bold green]v{suggested_version}[/bold green]\n\n"
+            f"Release Notes:\n{notes_text}",
+            title="🏷️ Suggested Release"
+        )
+        
+        if dry_run:
+            from gitdude.utils import info_panel
+            info_panel("Dry run mode — no changes made.", title="🧪 Dry Run")
+            raise typer.Exit(0)
+            
+        # Ask for confirmation or edit
+        if not no_confirm:
+            action = questionary.select(
+                "What would you like to do?",
+                choices=["Create and Push Tag", "Edit Version/Notes", "Cancel"],
+                style=custom_style
+            ).ask()
+            
+            if action == "Cancel" or not action:
+                raise typer.Exit(0)
+            elif action == "Edit Version/Notes":
+                suggested_version = questionary.text("Enter version (without v):", default=suggested_version, style=custom_style).ask()
+                notes_text = questionary.text("Enter release notes:", default=notes_text, style=custom_style).ask()
+                if not suggested_version:
+                    raise typer.Exit(0)
+        
+        tag_name = f"v{suggested_version}"
+        
+        # Create tag
+        _c.print(f"[dim]Creating tag {tag_name}...[/dim]")
+        git_ops.create_tag(repo, tag_name, notes_text)
+        
+        # Push tag
+        _c.print(f"[dim]Pushing tag {tag_name} to origin...[/dim]")
+        try:
+            git_ops.push_tag(repo, tag_name)
+            success_panel(f"Successfully created and pushed tag [bold]{tag_name}[/bold]!", title="✅ Release Complete")
+        except Exception as exc:
+            warning_panel(f"Tag created locally but failed to push:\n{exc}", title="⚠️ Push Failed")
+            
+    except Exception as exc:
+        error_panel(f"Failed to generate release notes:\n{exc}", title="❌ Tag Command Failed")
+        raise typer.Exit(1)# ---------------------------------------------------------------------------
 # gitdude sync
 # ---------------------------------------------------------------------------
 

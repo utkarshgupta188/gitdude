@@ -272,13 +272,15 @@ def get_changed_files(repo: Repo) -> list[str]:
     if has_commits(repo):
         # Staged changes
         for item in repo.index.diff("HEAD"):
-            files.add(item.a_path)
+            if item.a_path:
+                files.add(item.a_path)
             if item.b_path:
                 files.add(item.b_path)
 
         # Unstaged changes
         for item in repo.index.diff(None):
-            files.add(item.a_path)
+            if item.a_path:
+                files.add(item.a_path)
             if item.b_path:
                 files.add(item.b_path)
 
@@ -346,4 +348,30 @@ def read_file_contents(repo: Repo, paths: list[str], max_chars: int = 5000) -> s
             except Exception:
                 continue
     return "\n\n".join(parts) if parts else "(no key files found)"
+
+
+def get_latest_tag(repo: Repo) -> str:
+    """Return the latest tag name, or empty string if no tags exist."""
+    try:
+        return repo.git.describe("--tags", "--abbrev=0")
+    except GitCommandError:
+        return ""
+
+
+def get_commits_since(repo: Repo, ref: str) -> str:
+    """Return commits since the given ref as oneline log."""
+    try:
+        return repo.git.log(f"{ref}..HEAD", "--oneline")
+    except GitCommandError:
+        return ""
+
+
+def create_tag(repo: Repo, tag_name: str, message: str) -> str:
+    """Create an annotated tag."""
+    return repo.git.tag("-a", tag_name, "-m", message)
+
+
+def push_tag(repo: Repo, tag_name: str) -> str:
+    """Push a specific tag to origin."""
+    return repo.git.push("origin", tag_name)
 
