@@ -15,10 +15,11 @@
 - 💬 **Natural language commands** — `gitdude do "stash, switch to main, pull"`
 - 🔍 **AI code review** — bugs, security issues, quality flags before you push
 - 🌿 **Smart branch naming** — `gitdude branch "fix login problem"`
-- ✂️ **Commit splitting** — `gitdude split` messy changes into logical commits
+- 💾 **Commit only** — `gitdude commit` generates messages without pushing
 - 💬 **Codebase chat** — `gitdude chat "how does X work?"`
 - 🚑 **Emergency recovery** — `gitdude whoops` diagnoses and fixes git disasters
 - 📋 **PR generation** — full GitHub PR description, auto-copied to clipboard
+- 🏷️ **Automated Tagging** — `gitdude tag` suggests versions and generates release notes
 - 🎨 **Beautiful Rich UI** — tables, panels, spinners, color-coded output
 - 🔐 **Secure config** — keys stored in `~/.gitdude/config.json`, never in `.env`
 
@@ -100,6 +101,19 @@ gitdude push --style freeform     # Use freeform (not conventional) commit style
 
 ---
 
+### `gitdude commit`
+
+AI-generates a commit message for your changes, lets you confirm/edit, and commits (but does NOT push).
+
+```bash
+gitdude commit                    # Stage all → AI commit
+gitdude commit --no-confirm       # Skip confirmation
+gitdude commit --dry-run          # Preview only, don't execute
+gitdude commit --style freeform   # Use freeform commit style
+```
+
+---
+
 ### `gitdude sync`
 
 Fetch + rebase. If there are merge conflicts, AI explains what's conflicting and gives exact resolution steps.
@@ -121,18 +135,6 @@ gitdude back --dry-run
 ```
 
 **Modes:** `soft` (keep changes staged), `hard` (discard changes), `checkout` (detached HEAD), `branch` (new branch from that commit)
-
----
-
-### `gitdude undo "<description>"`
-
-Describe what went wrong — AI reads your log and reflog to determine the safest recovery.
-
-```bash
-gitdude undo "I accidentally committed my .env file"
-gitdude undo "I deleted the wrong branch"
-gitdude undo "I made a mess of the last 3 commits" --dry-run
-```
 
 ---
 
@@ -176,18 +178,6 @@ gitdude branch "fix the login timeout bug"
 
 ---
 
-### `gitdude split`
-
-The ultimate tool for messy working trees. AI analyzes all your changes and groups them into logical, atomic commits.
-
-```bash
-gitdude split
-# → Groups files + generates commit messages
-# → Interactive loop to commit each group one-by-one
-```
-
----
-
 ### `gitdude chat "<question>"`
 
 Ask questions about your codebase. It reads your file tree, README, and recent history to provide specific answers.
@@ -211,12 +201,14 @@ gitdude pr --no-copy              # Don't copy to clipboard
 
 ---
 
-### `gitdude explain`
+### `gitdude tag`
 
-Reads your last 5 reflog entries and explains in plain English what happened.
+Scans commits since last tag, suggests next version, and generates release notes.
 
 ```bash
-gitdude explain
+gitdude tag
+gitdude tag --no-confirm          # Skip confirmation
+gitdude tag --dry-run             # Preview only
 ```
 
 ---
