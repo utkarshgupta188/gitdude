@@ -147,26 +147,13 @@ def _run_interactive_config() -> None:
 # gitdude push
 # ---------------------------------------------------------------------------
 
-@app.command("push")
-def cmd_push(
-    no_confirm: bool = typer.Option(False, "--no-confirm", help="Skip confirmation prompt"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute"),
-    style: str = typer.Option("", "--style", help="Commit style: conventional or freeform")):
-    """
-    [bold green]AI-generated commit message + push.[/bold green]
-
-    Stages all changes, generates a commit message via AI, and pushes.
-    """
+def _shared_commit_flow(push: bool, no_confirm: bool, dry_run: bool, style: str) -> None:
     _ensure_configured()
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.config import get_config
-    from gitdude.utils import (
-    custom_style,
-        ai_panel, error_panel, success_panel, warning_panel,
-        confirm, ask, info_panel, console as _c
-    )
-    from rich.prompt import Prompt as _Prompt
+    from gitdude.utils import custom_style, ai_panel, info_panel, success_panel, warning_panel, error_panel, ask, console as _c
+    import questionary
 
     repo = git_ops.get_repo()
     cfg = get_config()
@@ -187,18 +174,13 @@ def cmd_push(
             diff_text = staged
         _c.print("[dim]🆕 No commits yet — this will be the initial commit.[/dim]")
     else:
-        staged = git_ops.get_staged_diff(repo)
-        if not staged:
-            # Fallback to working tree diff
-            console.print("[dim]No staged changes detected — using full working tree diff.[/dim]")
-            diff_text = git_ops.get_all_diff(repo)
-            
-            # Include untracked files contents
-            untracked_diff = git_ops.get_untracked_diff(repo)
-            if untracked_diff:
-                diff_text += "\n" + untracked_diff
-        else:
-            diff_text = staged
+            if staged := git_ops.get_staged_diff(repo):
+                diff_text = staged
+            else:
+                console.print("[dim]No staged changes detected — using full working tree diff.[/dim]")
+                diff_text = git_ops.get_all_diff(repo)
+                if untracked := git_ops.get_untracked_diff(repo):
+                    diff_text += "\n" + untracked
 
     if not diff_text.strip():
         warning_panel("No changes detected (nothing staged or modified). Nothing to commit.", title="⚠️  Nothing to Commit")
@@ -260,47 +242,84 @@ def cmd_push(
             _c.print("[dim]📦 All files already staged.[/dim]")
         git_ops.commit(repo, commit_msg)
         _c.print("[dim]💾 Committed.[/dim]")
-        push_output = git_ops.push(repo)
-        success_panel(
-            f"Commit: [bold]{commit_msg}[/bold]\n{push_output}",
-            title="✅ Pushed Successfully")
-    except Exception as exc:  # noqa: BLE001
-        error_str = str(exc)
         
-        # Check for common non-fast-forward error to give a quick response
-        if "Updates were rejected because the remote contains work" in error_str or "fetch first" in error_str:
-            from gitdude.utils import warning_panel, print_command_table
-            warning_panel(
-                "Push rejected: Your local branch is behind the remote branch.\n"
-                "You need to integrate remote changes before you can push.",
-                title="⚠️ Push Rejected"
+        if push:
+            push_output = git_ops.push(repo)
+            success_panel(
+                f"Commit: [bold]{commit_msg}[/bold]\n{push_output}",
+                title="✅ Pushed Successfully")
+        else:
+            success_panel(
+                f"Commit: [bold]{commit_msg}[/bold]",
+                title="✅ Committed Successfully")
+                
+    except Exception as exc:
+        if push:
+            error_str = str(exc)
+            
+            # Check for common non-fast-forward error to give a quick response
+            if "Updates were rejected because the remote contains work" in error_str or "fetch first" in error_str:
+                from gitdude.utils import warning_panel, print_command_table
+                warning_panel(
+                    "Push rejected: Your local branch is behind the remote branch.\n"
+                    "You need to integrate remote changes before you can push.",
+                    title="⚠️ Push Rejected"
+                )
+                print_command_table(["gitdude sync", "git push"], title="Suggested Commands")
+                raise typer.Exit(1)
+                
+            # For other errors, use AI to diagnose
+            prompt = (
+                f"The `git push` command failed with the following error:\n{error_str}\n\n"
+                f"Please:\n"
+                f"1. Explain what the error means in 1 or 2 lines in plain English.\n"
+                f"2. Suggest the exact command(s) to fix it, one per line starting with 'COMMAND:'.\n"
+                f"Format the response clearly without markdown code blocks."
             )
-            print_command_table(["gitdude sync", "git push"], title="Suggested Commands")
+            try:
+                diagnosis = ask_ai(prompt, spinner_msg="🤖 Diagnosing push failure...")
+                lines = diagnosis.splitlines()
+                commands = [l.replace("COMMAND:", "").strip() for l in lines if l.strip().startswith("COMMAND:")]
+                explanation_lines = [l for l in lines if not l.strip().startswith("COMMAND:")]
+                explanation = "\n".join(explanation_lines).strip()
+                
+                from gitdude.utils import print_command_table
+                error_panel(explanation, title="❌ Push Failed (Diagnosis)")
+                if commands:
+                    print_command_table(commands, title="Suggested Commands to Fix")
+            except Exception:
+                # Fallback if AI fails
+                error_panel(f"Push failed:\n{exc}", title="❌ Push Failed")
             raise typer.Exit(1)
-            
-        # For other errors, use AI to diagnose
-        prompt = (
-            f"The `git push` command failed with the following error:\n{error_str}\n\n"
-            f"Please:\n"
-            f"1. Explain what the error means in 1 or 2 lines in plain English.\n"
-            f"2. Suggest the exact command(s) to fix it, one per line starting with 'COMMAND:'.\n"
-            f"Format the response clearly without markdown code blocks."
-        )
-        try:
-            diagnosis = ask_ai(prompt, spinner_msg="🤖 Diagnosing push failure...")
-            lines = diagnosis.splitlines()
-            commands = [l.replace("COMMAND:", "").strip() for l in lines if l.strip().startswith("COMMAND:")]
-            explanation_lines = [l for l in lines if not l.strip().startswith("COMMAND:")]
-            explanation = "\n".join(explanation_lines).strip()
-            
-            from gitdude.utils import print_command_table
-            error_panel(explanation, title="❌ Push Failed (Diagnosis)")
-            if commands:
-                print_command_table(commands, title="Suggested Commands to Fix")
-        except Exception:
-            # Fallback if AI fails
-            error_panel(f"Push failed:\n{exc}", title="❌ Push Failed")
-        raise typer.Exit(1)
+        else:
+            error_panel(f"Commit failed:\n{exc}", title="❌ Commit Failed")
+            raise typer.Exit(1)
+
+
+@app.command("push")
+def cmd_push(
+    no_confirm: bool = typer.Option(False, "--no-confirm", help="Skip confirmation prompt"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute"),
+    style: str = typer.Option("", "--style", help="Commit style: conventional or freeform")):
+    """
+    [bold green]AI-generated commit message + push.[/bold green]
+
+    Stages all changes, generates a commit message via AI, and pushes.
+    """
+    _shared_commit_flow(push=True, no_confirm=no_confirm, dry_run=dry_run, style=style)
+
+
+@app.command("commit")
+def cmd_commit(
+    no_confirm: bool = typer.Option(False, "--no-confirm", help="Skip confirmation prompt"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute"),
+    style: str = typer.Option("", "--style", help="Commit style: conventional or freeform")):
+    """
+    [bold green]AI-generated commit message only (no push).[/bold green]
+
+    Stages all changes, generates a commit message via AI, and commits.
+    """
+    _shared_commit_flow(push=False, no_confirm=no_confirm, dry_run=dry_run, style=style)
 
 
 # ---------------------------------------------------------------------------
@@ -446,83 +465,32 @@ def cmd_back(
     except GitCommandError as exc:
         error_panel(str(exc), title="❌ Git Error")
         raise typer.Exit(1)
-
-
-# ---------------------------------------------------------------------------
-# gitdude undo
-# ---------------------------------------------------------------------------
-
-@app.command("undo")
-def cmd_undo(
-    description: str = typer.Argument(..., help='Describe what went wrong, e.g. "I committed my .env file"'),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute")):
-    """
-    [bold green]AI diagnoses your git mistake and gives recovery steps.[/bold green]
-
-    Example: gitdude undo "I accidentally committed my .env file"
-    """
-    _ensure_configured()
-    from gitdude import git_ops
+def _execute_commands(repo, commands: list[str], confirm_msg: str = "Execute commands?", default_confirm: bool = True) -> None:
+    from gitdude.utils import console, ai_panel, success_panel, confirm
     from gitdude.ai import ask_ai
-    from gitdude.utils import custom_style, ai_panel, warning_panel, error_panel, success_panel, confirm, danger_panel
-    from git import GitCommandError
-
-    repo = git_ops.get_repo()
-    git_log = git_ops.get_log_oneline(repo, n=15)
-    status = git_ops.get_status(repo)
-    reflog = git_ops.get_reflog(repo, n=10)
-
-    prompt = (
-        f"A developer needs help recovering from a git mistake.\n\n"
-        f"Problem description: {description}\n\n"
-        f"Git log (recent):\n{git_log}\n\n"
-        f"Git status:\n{status}\n\n"
-        f"Git reflog:\n{reflog}\n\n"
-        "Please:\n"
-        "1. Identify exactly what happened\n"
-        "2. Suggest the safest recovery command(s) — one per line, starting with 'COMMAND:'\n"
-        "3. Warn clearly if any step is destructive (data loss)\n"
-        "4. Explain each command briefly\n"
-        "Format: plain text, no markdown code blocks."
-    )
-
-    analysis = ask_ai(prompt, spinner_msg="🤖 Diagnosing the issue...")
-
-    # Parse out commands
-    lines = analysis.splitlines()
-    commands = [l.replace("COMMAND:", "").strip() for l in lines if l.strip().startswith("COMMAND:")]
-    explanation_lines = [l for l in lines if not l.strip().startswith("COMMAND:")]
-    explanation = "\n".join(explanation_lines).strip()
-
-    ai_panel(explanation, title="🤖 Diagnosis & Recovery Plan")
-
-    if commands:
-        from gitdude.utils import print_command_table
-        print_command_table(commands, title="Recovery Commands")
-
-        destructive_keywords = {"--hard", "--force", "-f", "reset", "rm", "clean"}
-        is_destructive = any(kw in " ".join(commands) for kw in destructive_keywords)
-        if is_destructive:
-            danger_panel(
-                "One or more recovery commands are [bold red]destructive[/bold red] and cannot be undone.\nReview carefully before confirming.",
-                title="🚨 Destructive Warning")
-
-        if dry_run:
-            from gitdude.utils import info_panel
-            info_panel("Dry run — no commands executed.", title="🧪 Dry Run")
-            raise typer.Exit(0)
-
-        if confirm("Execute these recovery commands?", default=False):
-            for cmd in commands:
-                ok, out = git_ops.run_git_command(repo, cmd)
-                if ok:
-                    console.print(f"[green]✓ {cmd}[/green]\n{out}")
-                else:
-                    error_panel(f"Command failed: {cmd}\n{out}", title="❌ Command Failed")
-                    raise typer.Exit(1)
-            success_panel("Recovery complete!", title="✅ Done")
-        else:
-            console.print("[dim]Cancelled.[/dim]")
+    from gitdude import git_ops
+    import typer
+    
+    if not confirm(confirm_msg, default=default_confirm):
+        console.print("[dim]Cancelled.[/dim]")
+        raise typer.Exit(0)
+        
+    for cmd in commands:
+        console.print(f"\n[bold yellow]▶ {cmd}[/bold yellow]")
+        ok, out = git_ops.run_git_command(repo, cmd)
+        if out:
+            console.print(f"[dim]{out}[/dim]")
+        if not ok:
+            prompt = (
+                f"This git command failed:\n{cmd}\n\n"
+                f"Error output:\n{out}\n\n"
+                "Explain why it failed and suggest a fix in 2-3 sentences."
+            )
+            fix = ask_ai(prompt, spinner_msg="🤖 Diagnosing failure...")
+            ai_panel(fix, title="🤖 Error Analysis & Suggested Fix")
+            raise typer.Exit(1)
+            
+    success_panel(f"All {len(commands)} command(s) executed successfully.", title="✅ Done")
 
 
 # ---------------------------------------------------------------------------
@@ -542,9 +510,9 @@ def cmd_do(
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.utils import (
-    custom_style,
+        custom_style,
         ai_panel, print_command_table, error_panel, success_panel,
-        confirm, info_panel, warning_panel
+        confirm, info_panel, warning_panel, console
     )
 
     repo = git_ops.get_repo()
@@ -590,26 +558,7 @@ def cmd_do(
         info_panel("Dry run — no commands executed.", title="🧪 Dry Run")
         raise typer.Exit(0)
 
-    if not confirm(f"Execute {len(commands)} command(s)?"):
-        console.print("[dim]Cancelled.[/dim]")
-        raise typer.Exit(0)
-
-    for cmd in commands:
-        console.print(f"\n[bold yellow]▶ {cmd}[/bold yellow]")
-        ok, out = git_ops.run_git_command(repo, cmd)
-        if out:
-            console.print(f"[dim]{out}[/dim]")
-        if not ok:
-            prompt2 = (
-                f"This git command failed:\n{cmd}\n\n"
-                f"Error output:\n{out}\n\n"
-                "Explain why it failed and suggest a fix in 2-3 sentences."
-            )
-            fix = ask_ai(prompt2, spinner_msg="🤖 Diagnosing failure...")
-            ai_panel(fix, title="🤖 Error Analysis & Suggested Fix")
-            raise typer.Exit(1)
-
-    success_panel(f"All {len(commands)} command(s) executed successfully.", title="✅ Done")
+    _execute_commands(repo, commands, confirm_msg=f"Execute {len(commands)} command(s)?")
 
 
 # ---------------------------------------------------------------------------
@@ -751,36 +700,7 @@ def cmd_pr(
                 title="⚠️  Clipboard Unavailable")
 
 
-# ---------------------------------------------------------------------------
-# gitdude explain
-# ---------------------------------------------------------------------------
 
-@app.command("explain")
-def cmd_explain():
-    """
-    [bold green]AI explains your last 5 git operations in plain English.[/bold green]
-    """
-    _ensure_configured()
-    from gitdude import git_ops
-    from gitdude.ai import ask_ai
-    from gitdude.utils import custom_style, ai_panel
-
-    repo = git_ops.get_repo()
-    reflog = git_ops.get_reflog(repo, n=5)
-    log = git_ops.get_log_oneline(repo, n=5)
-
-    prompt = (
-        "Explain the following git reflog and log entries in plain English.\n"
-        "Write as if explaining to a junior developer.\n"
-        "Be concise — 1-2 sentences per operation.\n\n"
-        f"Reflog (last 5 operations):\n{reflog}\n\n"
-        f"Commit log (last 5):\n{log}\n\n"
-        "Format each entry as:\n"
-        "- [operation]: plain English explanation"
-    )
-
-    explanation = ask_ai(prompt, spinner_msg="🤖 Analyzing git history...")
-    ai_panel(explanation, title="🤖 What Happened (Plain English)")
 
 
 # ---------------------------------------------------------------------------
@@ -844,18 +764,7 @@ def cmd_whoops(
         info_panel("Dry run or no commands — nothing executed.", title="🧪 Dry Run")
         raise typer.Exit(0)
 
-    if confirm("Execute the recovery commands?", default=False):
-        for cmd in commands:
-            console.print(f"\n[bold yellow]▶ {cmd}[/bold yellow]")
-            ok, out = git_ops.run_git_command(repo, cmd)
-            if out:
-                console.print(f"[dim]{out}[/dim]")
-            if not ok:
-                error_panel(f"Command failed: {cmd}\n{out}", title="❌ Failed")
-                raise typer.Exit(1)
-        success_panel("Recovery commands executed.", title="✅ Done")
-    else:
-        console.print("[dim]No commands executed.[/dim]")
+    _execute_commands(repo, commands, confirm_msg="Execute the recovery commands?", default_confirm=False)
 
 
 # ---------------------------------------------------------------------------
@@ -986,93 +895,7 @@ def cmd_branch(
         warning_panel(f"Could not create branch: {e}", title="⚠️  Error")
 
 
-# ---------------------------------------------------------------------------
-# split — Smart commit splitter
-# ---------------------------------------------------------------------------
 
-@app.command("split")
-def cmd_split():
-    """
-    [bold green]AI-guided splitting of messy changes into logical commits.[/bold green]
-    """
-    _ensure_configured()
-    from gitdude import git_ops
-    from gitdude.ai import ask_ai
-    from gitdude.utils import custom_style, ai_panel, success_panel, warning_panel, info_panel, console as _c
-    import json
-
-    repo = git_ops.get_repo()
-
-    # Gather all changed files
-    changed = git_ops.get_changed_files(repo)
-    if not changed:
-        warning_panel("No changes detected. Nothing to split.", title="⚠️  Nothing to Split")
-        raise typer.Exit(0)
-
-    # Get the full diff for AI context
-    diff_text = git_ops.get_all_diff(repo)
-    untracked_diff = git_ops.get_untracked_diff(repo)
-    if untracked_diff:
-        diff_text += "\n" + untracked_diff
-
-    file_list = "\n".join(f"- {f}" for f in changed)
-
-    prompt = (
-        "You are an expert at organizing git commits.\n"
-        "Given the following list of changed files and their diff, group them into logical commits.\n\n"
-        "Rules:\n"
-        "- Each group should represent ONE logical change (a feature, a fix, a refactor, etc.)\n"
-        "- Provide a conventional commit message for each group\n"
-        "- Respond in STRICT JSON format, nothing else\n"
-        "- Format: [{\"message\": \"feat: add X\", \"files\": [\"path/to/file1\", \"path/to/file2\"]}, ...]\n\n"
-        f"Changed files:\n{file_list}\n\n"
-        f"Diff:\n{diff_text[:8000]}"
-    )
-
-    raw = ask_ai(prompt, spinner_msg="🧠 Analyzing changes...")
-
-    # Parse AI response
-    try:
-        # Extract JSON from response (AI might wrap it in markdown)
-        raw = raw.strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1]
-            raw = raw.rsplit("```", 1)[0]
-        groups = json.loads(raw.strip())
-    except (json.JSONDecodeError, IndexError):
-        warning_panel("AI returned an unexpected format. Showing raw response:", title="⚠️  Parse Error")
-        _c.print(f"[dim]{raw[:2000]}[/dim]")
-        raise typer.Exit(1)
-
-    # Display the groups
-    for i, g in enumerate(groups, 1):
-        files_str = "\n".join(f"  • {f}" for f in g.get("files", []))
-        ai_panel(f"[bold]{g.get('message', 'No message')}[/bold]\n{files_str}", title=f"📦 Group {i}")
-
-    # Let user commit groups one by one
-    for i, g in enumerate(groups, 1):
-        action = questionary.select(
-            f"Commit group {i}: {g.get('message', '')}?",
-            choices=["commit", "skip", "stop"],
-            default="commit",
-        style=custom_style).ask()
-
-        if not action or action == "stop":
-            _c.print("[dim]Stopped.[/dim]")
-            break
-
-        if action == "skip":
-            continue
-
-        files = g.get("files", [])
-        msg = g.get("message", "chore: update")
-
-        try:
-            git_ops.stage_files(repo, files)
-            repo.index.commit(msg)
-            success_panel(f"[bold]{msg}[/bold]\n({len(files)} file(s))", title=f"✅ Committed Group {i}")
-        except Exception as e:
-            warning_panel(f"Error committing group {i}: {e}", title="⚠️  Error")
 
 
 # ---------------------------------------------------------------------------
