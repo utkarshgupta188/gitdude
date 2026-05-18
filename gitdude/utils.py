@@ -43,7 +43,7 @@ def info_panel(content: str, title: str = "ℹ️  Info") -> None:
 
 
 def ai_panel(content: str, title: str = "🤖 AI Response") -> None:
-    panel(content, title=title, style="bold magenta", border_style="magenta")
+    panel(content, title=title, style="#E0E0E0", border_style="#FFB74D")
 
 
 def danger_panel(content: str, title: str = "🚨 Danger — Destructive Operation") -> None:

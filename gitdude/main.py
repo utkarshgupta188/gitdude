@@ -16,8 +16,7 @@ app = typer.Typer(
     name="gitdude",
     help="🧠 GitDude — AI-powered Git workflow assistant",
     add_completion=True,
-    rich_markup_mode="rich",
-    no_args_is_help=True)
+    rich_markup_mode="rich")
 
 console = Console()
 
@@ -35,6 +34,20 @@ def _ensure_configured() -> None:
             "Let's set it up now...\n"
         )
         _run_interactive_config()
+
+
+@app.callback(invoke_without_command=True)
+def main(ctx: typer.Context):
+    """
+    🧠 GitDude — AI-powered Git workflow assistant
+    """
+
+
+    if ctx.invoked_subcommand is None:
+        from gitdude.config import is_configured
+        if not is_configured():
+            _ensure_configured()
+        console.print(ctx.get_help())
 
 
 def _run_interactive_config() -> None:
@@ -70,10 +83,17 @@ def _run_interactive_config() -> None:
         }
         console.print(f"[dim]{env_hints.get(provider, '')}[/dim]")
         existing_key = existing.get("api_key", {}).get(provider, "")
-        api_key = Prompt.ask(
-            f"[bold cyan]API Key for {provider}[/bold cyan]",
-            default=existing_key,
-            password=True)
+        if existing_key:
+            api_key = Prompt.ask(
+                f"[bold cyan]API Key for {provider}[/bold cyan] (Press Enter to keep existing)",
+                default="",
+                password=True)
+            if not api_key:
+                api_key = existing_key
+        else:
+            api_key = Prompt.ask(
+                f"[bold cyan]API Key for {provider}[/bold cyan]",
+                password=True)
     else:
         console.print("[dim]Ollama is local — no API key needed.[/dim]")
 
@@ -188,15 +208,15 @@ def cmd_push(
     style_instructions = (
         "Use the Conventional Commits format: type(scope): description\n"
         "Types: feat, fix, chore, docs, refactor, style, test, perf, ci\n"
-        "The subject line should be a concise summary of the primary change.\n"
-        "If there are multiple distinct changes, list them in a brief bulleted body if it helps clarity."
+        "The subject line should be a concise summary of the primary change (max 50 chars).\n"
+        "Keep it brief. Only use a bulleted body if there are multiple complex changes that cannot be summarized in one line."
         if commit_style == "conventional"
-        else "Write a clear, concise commit message in plain English summarizing all significant changes."
+        else "Write a clear, concise commit message in plain English (max 50 chars for subject line). Summarize changes at a high level."
     )
     prompt = (
         f"You are an expert software engineer writing a git commit message for code changes.\n\n"
-        f"IMPORTANT: Analyze the ENTIRE diff below and ensure your message covers ALL significant modifications. "
-        f"Do not just focus on the last file or the largest change if multiple distinct things were updated.\n\n"
+        f"IMPORTANT: Analyze the ENTIRE diff below and ensure your message covers the MOST SIGNIFICANT modifications. "
+        f"Do not list every small detail or file changed. Focus on the core intent. Ignore or group minor changes (like adding a single package in package.json) if there are larger functional changes.\n\n"
         f"Style instructions:\n{style_instructions}\n\n"
         f"Git status:\n{status}\n\n"
         f"Git diff:\n{diff_text[:8000]}\n\n"
@@ -239,7 +259,41 @@ def cmd_push(
             f"Commit: [bold]{commit_msg}[/bold]\n{push_output}",
             title="✅ Pushed Successfully")
     except Exception as exc:  # noqa: BLE001
-        error_panel(f"Push failed:\n{exc}", title="❌ Push Failed")
+        error_str = str(exc)
+        
+        # Check for common non-fast-forward error to give a quick response
+        if "Updates were rejected because the remote contains work" in error_str or "fetch first" in error_str:
+            from gitdude.utils import warning_panel, print_command_table
+            warning_panel(
+                "Push rejected: Your local branch is behind the remote branch.\n"
+                "You need to integrate remote changes before you can push.",
+                title="⚠️ Push Rejected"
+            )
+            print_command_table(["gitdude sync", "git push"], title="Suggested Commands")
+            raise typer.Exit(1)
+            
+        # For other errors, use AI to diagnose
+        prompt = (
+            f"The `git push` command failed with the following error:\n{error_str}\n\n"
+            f"Please:\n"
+            f"1. Explain what the error means in 1 or 2 lines in plain English.\n"
+            f"2. Suggest the exact command(s) to fix it, one per line starting with 'COMMAND:'.\n"
+            f"Format the response clearly without markdown code blocks."
+        )
+        try:
+            diagnosis = ask_ai(prompt, spinner_msg="🤖 Diagnosing push failure...")
+            lines = diagnosis.splitlines()
+            commands = [l.replace("COMMAND:", "").strip() for l in lines if l.strip().startswith("COMMAND:")]
+            explanation_lines = [l for l in lines if not l.strip().startswith("COMMAND:")]
+            explanation = "\n".join(explanation_lines).strip()
+            
+            from gitdude.utils import print_command_table
+            error_panel(explanation, title="❌ Push Failed (Diagnosis)")
+            if commands:
+                print_command_table(commands, title="Suggested Commands to Fix")
+        except Exception:
+            # Fallback if AI fails
+            error_panel(f"Push failed:\n{exc}", title="❌ Push Failed")
         raise typer.Exit(1)
 
 
@@ -840,6 +894,31 @@ def cmd_config(
         divider()
         return
 
+    from gitdude.config import is_configured
+    if is_configured():
+        cfg = get_config()
+        provider = cfg.get("provider", "gemini")
+        divider()
+        console.print("[bold cyan]📋 Current GitDude Configuration[/bold cyan]")
+        divider()
+        print_key_value("Provider", provider)
+        print_key_value("Model", cfg.get("model", {}).get(provider, "N/A"))
+        print_key_value("Default Branch", cfg.get("default_branch", "main"))
+        print_key_value("Commit Style", cfg.get("commit_style", "conventional"))
+        divider()
+        
+        import questionary
+        from gitdude.utils import custom_style
+        action = questionary.select(
+            "Configuration already exists. What would you like to do?",
+            choices=["Edit", "Cancel"],
+            default="Edit",
+            style=custom_style).ask()
+            
+        if not action or action == "Cancel":
+            console.print("[dim]Cancelled.[/dim]")
+            raise typer.Exit(0)
+            
     _run_interactive_config()
 
 
@@ -1032,6 +1111,9 @@ def cmd_chat(
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+
+
 
 def main() -> None:
     app()
