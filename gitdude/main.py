@@ -244,7 +244,9 @@ def cmd_push(
         raise typer.Exit(0)
 
     if action == "edit":
-        commit_msg = ask("Edit commit message", default=commit_msg)
+        edited_msg = typer.edit(commit_msg)
+        if edited_msg is not None:
+            commit_msg = edited_msg.strip()
 
     try:
         if not is_first_commit:
