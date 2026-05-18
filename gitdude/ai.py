@@ -149,6 +149,16 @@ def _ask_openai(prompt: str, model: str, api_key: str, stream: bool = False) -> 
 # Public interface
 # ---------------------------------------------------------------------------
 
+def _is_internet_available() -> bool:
+    """Check if internet connection is available by pinging Google DNS."""
+    import socket
+    try:
+        socket.create_connection(("8.8.8.8", 53), timeout=1.5)
+        return True
+    except OSError:
+        return False
+
+
 def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...", stream: bool = False) -> str:
     """
     Send a prompt to the configured AI provider and return the response.
@@ -170,14 +180,24 @@ def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...", stream: bool = Fa
     api_key = get_provider_api_key(provider)
 
     LOCAL_PROVIDERS = {"ollama"}
+    is_online = [True]
+    net_thread = None
 
-    if provider not in LOCAL_PROVIDERS and not api_key:
-        error_panel(
-            f"No API key found for provider [bold]{provider}[/bold].\n"
-            f"Run [bold cyan]gitdude config[/bold cyan] to set your key.",
-            title="❌ Missing API Key",
-        )
-        sys.exit(1)
+    if provider not in LOCAL_PROVIDERS:
+        if not api_key:
+            error_panel(
+                f"No API key found for provider [bold]{provider}[/bold].\n"
+                f"Run [bold cyan]gitdude config[/bold cyan] to set your key.",
+                title="❌ Missing API Key",
+            )
+            sys.exit(1)
+            
+        # Run internet check in background
+        import threading
+        def _check_net():
+            is_online[0] = _is_internet_available()
+        net_thread = threading.Thread(target=_check_net, daemon=True)
+        net_thread.start()
 
     try:
         if stream:
@@ -226,10 +246,22 @@ def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...", stream: bool = Fa
             if isinstance(result, str):
                 return result
             raise RuntimeError("Expected string response from AI provider")
+            
     except RuntimeError as exc:
         error_panel(str(exc), title="❌ AI Provider Error")
         sys.exit(1)
     except Exception as exc:  # noqa: BLE001
+        # Wait for network check to finish if it was started
+        if net_thread:
+            net_thread.join(timeout=2.0)
+            if not is_online[0]:
+                error_panel(
+                    "No internet connection detected.\n"
+                    "Please check your network connection and try again.",
+                    title="❌ No Internet Connection",
+                )
+                sys.exit(1)
+
         error_panel(
             f"An error occurred while calling [bold]{provider}[/bold]:\n{exc}\n\n"
             "Check your API key, network connection, and model name.",

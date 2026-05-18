@@ -36,18 +36,64 @@ def _ensure_configured() -> None:
         _run_interactive_config()
 
 
+def _check_for_updates() -> None:
+    """Check for updates from PyPI once a day."""
+    from gitdude.config import load_config, save_config
+    import time
+    import urllib.request
+    import json
+
+    cfg = load_config()
+    last_check = cfg.get("last_update_check", 0)
+    current_time = time.time()
+
+    # Check once every 24 hours (86400 seconds)
+    if current_time - last_check < 86400:
+        return
+
+    # Update last check time immediately to avoid spamming
+    cfg["last_update_check"] = current_time
+    save_config(cfg)
+
+    try:
+        url = "https://pypi.org/pypi/gitdude/json"
+        with urllib.request.urlopen(url, timeout=2.5) as response:
+            data = json.loads(response.read().decode())
+            latest_version = data["info"]["version"]
+            
+            current_version = "1.4.0"
+            try:
+                import importlib.metadata
+                current_version = importlib.metadata.version("gitdude")
+            except Exception:
+                pass
+
+            if latest_version != current_version:
+                from gitdude.utils import warning_panel
+                warning_panel(
+                    f"A new version of GitDude is available: [bold]{latest_version}[/bold] (Current: {current_version})\n"
+                    "Run [bold]pip install --upgrade gitdude[/bold] to update.",
+                    title="🚀 Update Available"
+                )
+    except Exception:
+        pass
+
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """
     🧠 GitDude — AI-powered Git workflow assistant
     """
-
-
     if ctx.invoked_subcommand is None:
         from gitdude.config import is_configured
         if not is_configured():
             _ensure_configured()
         console.print(ctx.get_help())
+        raise typer.Exit(0)
+
+    # Run update check in background for actual commands
+    import threading
+    threading.Thread(target=_check_for_updates, daemon=True).start()
 
 
 def _run_interactive_config() -> None:
