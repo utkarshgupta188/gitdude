@@ -8,7 +8,7 @@ Supports: gemini, groq, ollama, openai
 from __future__ import annotations
 
 import sys
-from typing import Optional, Iterator
+from collections.abc import Iterator
 
 from rich.console import Console
 from rich.live import Live
@@ -43,7 +43,7 @@ def _ask_gemini(prompt: str, model: str, api_key: str, stream: bool = False) -> 
         )
     genai.configure(api_key=api_key)
     client = genai.GenerativeModel(model)
-    
+
     if stream:
         response = client.generate_content(prompt, stream=True)
         def _gen():
@@ -68,7 +68,7 @@ def _ask_groq(prompt: str, model: str, api_key: str, stream: bool = False) -> st
     except ImportError:
         raise RuntimeError("groq is not installed. Run: pip install groq")
     client = Groq(api_key=api_key, timeout=20.0)
-    
+
     if stream:
         completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
@@ -95,7 +95,7 @@ def _ask_ollama(prompt: str, model: str, stream: bool = False) -> str | Iterator
         import ollama  # type: ignore
     except ImportError:
         raise RuntimeError("ollama is not installed. Run: pip install ollama")
-    
+
     if stream:
         response = ollama.chat(
             model=model,
@@ -123,7 +123,7 @@ def _ask_openai(prompt: str, model: str, api_key: str, stream: bool = False) -> 
     except ImportError:
         raise RuntimeError("openai is not installed. Run: pip install openai")
     client = OpenAI(api_key=api_key, timeout=20.0)
-    
+
     if stream:
         completion = client.chat.completions.create(
             model=model,
@@ -191,7 +191,7 @@ def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...", stream: bool = Fa
                 title="❌ Missing API Key",
             )
             sys.exit(1)
-            
+
         # Run internet check in background
         import threading
         def _check_net():
@@ -212,19 +212,19 @@ def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...", stream: bool = Fa
                     res = _ask_ollama(prompt, model, stream=True)
                 else:
                     raise RuntimeError(f"Unknown provider: {provider}")
-                
+
                 if isinstance(res, str):
                     return res
-                
+
                 iterator = res
                 try:
                     first_chunk = next(iterator)
                 except StopIteration:
                     return ""
-            
+
             console.print(first_chunk, end="")
             full_text = first_chunk
-            
+
             for chunk in iterator:
                 console.print(chunk, end="")
                 full_text += chunk
@@ -242,11 +242,11 @@ def ask_ai(prompt: str, spinner_msg: str = "🤖 Thinking...", stream: bool = Fa
                     result = _ask_ollama(prompt, model, stream=False)
                 else:
                     raise RuntimeError(f"Unknown provider: {provider}")
-            
+
             if isinstance(result, str):
                 return result
             raise RuntimeError("Expected string response from AI provider")
-            
+
     except RuntimeError as exc:
         error_panel(str(exc), title="❌ AI Provider Error")
         sys.exit(1)

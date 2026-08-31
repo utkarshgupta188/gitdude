@@ -6,10 +6,8 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Optional
 
-import git
-from git import Repo, InvalidGitRepositoryError, GitCommandError
+from git import GitCommandError, InvalidGitRepositoryError, Repo
 
 
 def get_repo(path: str = ".") -> Repo:
@@ -91,29 +89,27 @@ def get_diff_unstaged(repo: Repo) -> str:
 
 
 def get_branch_vs_main_diff(repo: Repo, base_branch: str = "main") -> str:
-    """Return diff of current branch versus base_branch."""
+    """Return diff of current branch versus base_branch. Empty string on failure."""
     if not has_commits(repo):
         return ""
-    try:
-        return repo.git.diff(f"{base_branch}...HEAD")
-    except GitCommandError:
+    for base in (base_branch, "master"):
         try:
-            return repo.git.diff("master...HEAD")
-        except GitCommandError as exc:
-            return f"[Error getting diff: {exc}]"
+            return repo.git.diff(f"{base}...HEAD")
+        except GitCommandError:
+            continue
+    return ""
 
 
 def get_log_main_diff(repo: Repo, base_branch: str = "main") -> str:
-    """Return commit log of current branch vs base_branch."""
+    """Return commit log of current branch vs base_branch. Empty string on failure."""
     if not has_commits(repo):
         return ""
-    try:
-        return repo.git.log(f"{base_branch}..HEAD", "--oneline")
-    except GitCommandError:
+    for base in (base_branch, "master"):
         try:
-            return repo.git.log("master..HEAD", "--oneline")
-        except GitCommandError as exc:
-            return f"[Error getting log: {exc}]"
+            return repo.git.log(f"{base}..HEAD", "--oneline")
+        except GitCommandError:
+            continue
+    return ""
 
 
 def get_recent_commits(repo: Repo, n: int = 30) -> list[dict]:
@@ -164,14 +160,19 @@ def commit(repo: Repo, message: str) -> None:
     repo.git.commit("-m", message)
 
 
-def push(repo: Repo) -> str:
-    """Push current branch to remote. Returns stdout."""
-    branch = repo.active_branch.name
-    try:
-        return repo.git.push("origin", branch)
-    except GitCommandError:
-        # Try to push with --set-upstream on first push
-        return repo.git.push("--set-upstream", "origin", branch)
+def push(repo: Repo, branch: str = "", remote: str = "", set_upstream: bool = False) -> str:
+    """
+    Push ``branch`` to ``remote`` and return stdout.
+
+    Falls back to the current active branch and ``origin`` remote when not
+    given. Raises GitCommandError so callers can inspect the real error
+    (a bare retry that masks non-fast-forward rejections is avoided here).
+    """
+    branch = branch or repo.active_branch.name
+    remote = remote or "origin"
+    if set_upstream:
+        return repo.git.push("--set-upstream", remote, branch)
+    return repo.git.push(remote, branch)
 
 
 def fetch(repo: Repo) -> str:
@@ -182,17 +183,13 @@ def pull_rebase(repo: Repo) -> str:
     return repo.git.pull("--rebase")
 
 
-def has_merge_conflicts(repo: Repo) -> bool:
-    """Check if there are merge conflict markers in the working tree."""
-    return repo.is_dirty(untracked_files=False) and bool(repo.index.unmerged_blobs())
-
-
 def get_conflict_content(repo: Repo) -> str:
     """Read content of conflicted files."""
     conflicts = []
     for path in repo.index.unmerged_blobs():
+        full = Path(repo.working_dir) / path
         try:
-            content = Path(path).read_text(encoding="utf-8", errors="replace")
+            content = full.read_text(encoding="utf-8", errors="replace")
             conflicts.append(f"=== {path} ===\n{content}")
         except OSError:
             conflicts.append(f"=== {path} === (could not read)")
@@ -215,15 +212,27 @@ def create_branch_from(repo: Repo, ref: str, branch_name: str) -> str:
     return repo.git.checkout("-b", branch_name, ref)
 
 
-def run_git_command(repo: Repo, command: str) -> tuple[bool, str]:
+def run_git_command(repo: Repo, command: str, safe: bool = False) -> tuple[bool, str]:
     """
-    Execute an arbitrary git command string via subprocess (not GitPython).
+    Execute a git command via subprocess (not GitPython).
+
+    The command string is split into argv and run WITHOUT a shell to prevent
+    command injection when the string originates from AI output. When ``safe``
+    is False (default) only a ``git`` executable prefix is auto-added; every
+    token is passed as a literal argument so separators like ``;``, ``&&``,
+    pipes, or backticks are never interpreted by a shell.
+
     Returns (success: bool, output: str).
     """
+    import shlex as _shlex
+    argv = _shlex.split(command) if command else []
+    if not argv:
+        return False, "empty command"
+    if argv[0] != "git":
+        argv = ["git", *argv]
     try:
         result = subprocess.run(
-            command,
-            shell=True,
+            argv,
             capture_output=True,
             text=True,
             cwd=repo.working_dir,
@@ -242,67 +251,14 @@ def get_current_branch(repo: Repo) -> str:
         return "HEAD (detached)"
 
 
-def stash(repo: Repo) -> str:
-    return repo.git.stash()
-
-
-def stash_pop(repo: Repo) -> str:
-    return repo.git.stash("pop")
-
-
 def get_log(repo: Repo, count: int = 10) -> str:
     """Return the last N commit log entries as a compact string."""
     if not has_commits(repo):
         return "(no commits yet)"
     try:
-        return repo.git.log(f"--oneline", f"-{count}", "--no-color")
+        return repo.git.log("--oneline", f"-{count}", "--no-color")
     except GitCommandError:
         return "(unable to read log)"
-
-
-
-# ---------------------------------------------------------------------------
-# Helpers for split, chat commands
-# ---------------------------------------------------------------------------
-
-def get_changed_files(repo: Repo) -> list[str]:
-    """Return a list of all modified, added, deleted, and untracked file paths."""
-    files = set()
-
-    if has_commits(repo):
-        # Staged changes
-        for item in repo.index.diff("HEAD"):
-            if item.a_path:
-                files.add(item.a_path)
-            if item.b_path:
-                files.add(item.b_path)
-
-        # Unstaged changes
-        for item in repo.index.diff(None):
-            if item.a_path:
-                files.add(item.a_path)
-            if item.b_path:
-                files.add(item.b_path)
-
-    # Untracked files
-    for f in repo.untracked_files:
-        files.add(f)
-
-    return sorted(files)
-
-
-def stage_files(repo: Repo, file_list: list[str]) -> None:
-    """Stage specific files by path."""
-    for f in file_list:
-        full_path = Path(repo.working_dir) / f
-        if full_path.exists():
-            repo.index.add([f])
-        else:
-            # File was deleted
-            try:
-                repo.index.remove([f])
-            except Exception:
-                pass
 
 
 def get_file_tree(repo: Repo, max_depth: int = 3) -> str:
@@ -371,7 +327,8 @@ def create_tag(repo: Repo, tag_name: str, message: str) -> str:
     return repo.git.tag("-a", tag_name, "-m", message)
 
 
-def push_tag(repo: Repo, tag_name: str) -> str:
-    """Push a specific tag to origin."""
-    return repo.git.push("origin", tag_name)
+def push_tag(repo: Repo, tag_name: str, remote: str = "") -> str:
+    """Push a specific tag to a remote (defaults to origin)."""
+    remote = remote or "origin"
+    return repo.git.push(remote, tag_name)
 

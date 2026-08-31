@@ -4,11 +4,9 @@ main.py — GitDude CLI: Typer app with all command definitions.
 
 from __future__ import annotations
 
-import sys
-from typing import Optional
-
-import typer
 import questionary
+import typer
+from git import GitCommandError
 from rich.console import Console
 from rich.prompt import Prompt
 
@@ -38,10 +36,11 @@ def _ensure_configured() -> None:
 
 def _check_for_updates() -> None:
     """Check for updates from PyPI once a day."""
-    from gitdude.config import load_config, save_config
+    import json
     import time
     import urllib.request
-    import json
+
+    from gitdude.config import load_config, save_config
 
     cfg = load_config()
     last_check = cfg.get("last_update_check", 0)
@@ -51,30 +50,31 @@ def _check_for_updates() -> None:
     if current_time - last_check < 86400:
         return
 
-    # Update last check time immediately to avoid spamming
-    cfg["last_update_check"] = current_time
-    save_config(cfg)
-
     try:
         url = "https://pypi.org/pypi/gitdude/json"
         with urllib.request.urlopen(url, timeout=2.5) as response:
             data = json.loads(response.read().decode())
             latest_version = data["info"]["version"]
-            
-            current_version = "1.4.0"
-            try:
-                import importlib.metadata
-                current_version = importlib.metadata.version("gitdude")
-            except Exception:
-                pass
 
-            if latest_version != current_version:
-                from gitdude.utils import warning_panel
-                warning_panel(
-                    f"A new version of GitDude is available: [bold]{latest_version}[/bold] (Current: {current_version})\n"
-                    "Run [bold]pip install --upgrade gitdude[/bold] to update.",
-                    title="🚀 Update Available"
-                )
+        current_version = "0.0.0"
+        try:
+            import importlib.metadata
+            current_version = importlib.metadata.version("gitdude")
+        except Exception:
+            current_version = __import__("gitdude").__version__
+
+        if latest_version != current_version:
+            from gitdude.utils import warning_panel
+            warning_panel(
+                f"A new version of GitDude is available: [bold]{latest_version}[/bold] (Current: {current_version})\n"
+                "Run [bold]pip install --upgrade gitdude[/bold] to update.",
+                title="🚀 Update Available"
+            )
+
+        # Only record the check time once the request actually succeeded, so a
+        # failed check doesn't burn the 24h window.
+        cfg["last_update_check"] = current_time
+        save_config(cfg)
     except Exception:
         pass
 
@@ -98,10 +98,8 @@ def main(ctx: typer.Context):
 
 def _run_interactive_config() -> None:
     """Interactive setup wizard (shared by `config` command and auto-trigger)."""
-    from gitdude.config import (
-        PROVIDERS, get_config, save_config, DEFAULTS, get_model_for_provider
-    )
-    from gitdude.utils import custom_style, success_panel, info_panel, divider
+    from gitdude.config import PROVIDERS, get_config, get_model_for_provider, save_config
+    from gitdude.utils import custom_style, divider, success_panel
 
     divider()
     console.print("[bold cyan]🔧 GitDude Configuration Setup[/bold cyan]")
@@ -193,40 +191,55 @@ def _run_interactive_config() -> None:
 # gitdude push
 # ---------------------------------------------------------------------------
 
-def _shared_commit_flow(push: bool, no_confirm: bool, dry_run: bool, style: str) -> None:
+def _shared_commit_flow(
+    push: bool,
+    no_confirm: bool,
+    dry_run: bool,
+    style: str,
+    branch: str = "",
+    remote: str = "",
+) -> None:
     _ensure_configured()
+    import questionary
+
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.config import get_config
-    from gitdude.utils import custom_style, ai_panel, info_panel, success_panel, warning_panel, error_panel, ask, console as _c
-    import questionary
+    from gitdude.utils import (
+        ai_panel,
+        custom_style,
+        error_panel,
+        info_panel,
+        success_panel,
+        warning_panel,
+    )
+    from gitdude.utils import console as _c
 
     repo = git_ops.get_repo()
     cfg = get_config()
     commit_style = style or cfg.get("commit_style", "conventional")
 
-    # Get diff — handle repos with no commits yet (HEAD doesn't exist)
     is_first_commit = not git_ops.has_commits(repo)
     status = git_ops.get_status(repo)
 
     if is_first_commit:
-        # On a new repo, stage everything first, then show what will be committed
+        # No HEAD yet: stage everything so the diff reflects what will be committed.
         git_ops.add_all(repo)
-        staged = git_ops.get_staged_diff(repo)
-        # get_staged_diff may also be empty before any staging; fall back to listing untracked files
-        if not staged:
-            diff_text = git_ops.get_untracked_and_new_files(repo)
-        else:
-            diff_text = staged
         _c.print("[dim]🆕 No commits yet — this will be the initial commit.[/dim]")
+        diff_text = git_ops.get_untracked_and_new_files(repo)
+        if not diff_text.strip():
+            diff_text = git_ops.get_staged_diff(repo)
     else:
-            if staged := git_ops.get_staged_diff(repo):
-                diff_text = staged
-            else:
-                console.print("[dim]No staged changes detected — using full working tree diff.[/dim]")
-                diff_text = git_ops.get_all_diff(repo)
-                if untracked := git_ops.get_untracked_diff(repo):
-                    diff_text += "\n" + untracked
+        # Stage nothing yet — gather the complete set of changes that
+        # `git add -A` will stage so the AI summary always matches the commit.
+        diff_parts = []
+        if git_ops.get_staged_diff(repo):
+            diff_parts.append(git_ops.get_staged_diff(repo))
+        if all_diff := git_ops.get_all_diff(repo):
+            diff_parts.append(all_diff)
+        if untracked := git_ops.get_untracked_diff(repo):
+            diff_parts.append(untracked)
+        diff_text = "\n".join(p for p in diff_parts if p)
 
     if not diff_text.strip():
         warning_panel("No changes detected (nothing staged or modified). Nothing to commit.", title="⚠️  Nothing to Commit")
@@ -260,7 +273,6 @@ def _shared_commit_flow(push: bool, no_confirm: bool, dry_run: bool, style: str)
         info_panel("Dry run mode — no changes made.", title="🧪 Dry Run")
         raise typer.Exit(0)
 
-    import questionary
     # Confirm / Edit / Cancel
     action = questionary.select(
         "Action",
@@ -281,16 +293,19 @@ def _shared_commit_flow(push: bool, no_confirm: bool, dry_run: bool, style: str)
             commit_msg = edited_msg.strip()
 
     try:
-        if not is_first_commit:
-            git_ops.add_all(repo)
-            _c.print("[dim]📦 Staging all changes...[/dim]")
-        else:
-            _c.print("[dim]📦 All files already staged.[/dim]")
+        git_ops.add_all(repo)
+        _c.print("[dim]📦 Staging all changes...[/dim]")
         git_ops.commit(repo, commit_msg)
         _c.print("[dim]💾 Committed.[/dim]")
-        
+
         if push:
-            push_output = git_ops.push(repo)
+            try:
+                push_output = git_ops.push(repo, branch=branch, remote=remote)
+            except GitCommandError as p_err:
+                if "no upstream branch" in str(p_err).lower():
+                    push_output = git_ops.push(repo, branch=branch, remote=remote, set_upstream=True)
+                else:
+                    raise p_err
             success_panel(
                 f"Commit: [bold]{commit_msg}[/bold]\n{push_output}",
                 title="✅ Pushed Successfully")
@@ -298,45 +313,10 @@ def _shared_commit_flow(push: bool, no_confirm: bool, dry_run: bool, style: str)
             success_panel(
                 f"Commit: [bold]{commit_msg}[/bold]",
                 title="✅ Committed Successfully")
-                
+
     except Exception as exc:
         if push:
-            error_str = str(exc)
-            
-            # Check for common non-fast-forward error to give a quick response
-            if "Updates were rejected because the remote contains work" in error_str or "fetch first" in error_str:
-                from gitdude.utils import warning_panel, print_command_table
-                warning_panel(
-                    "Push rejected: Your local branch is behind the remote branch.\n"
-                    "You need to integrate remote changes before you can push.",
-                    title="⚠️ Push Rejected"
-                )
-                print_command_table(["gitdude sync", "git push"], title="Suggested Commands")
-                raise typer.Exit(1)
-                
-            # For other errors, use AI to diagnose
-            prompt = (
-                f"The `git push` command failed with the following error:\n{error_str}\n\n"
-                f"Please:\n"
-                f"1. Explain what the error means in 1 or 2 lines in plain English.\n"
-                f"2. Suggest the exact command(s) to fix it, one per line starting with 'COMMAND:'.\n"
-                f"Format the response clearly without markdown code blocks."
-            )
-            try:
-                diagnosis = ask_ai(prompt, spinner_msg="🤖 Diagnosing push failure...")
-                lines = diagnosis.splitlines()
-                commands = [l.replace("COMMAND:", "").strip() for l in lines if l.strip().startswith("COMMAND:")]
-                explanation_lines = [l for l in lines if not l.strip().startswith("COMMAND:")]
-                explanation = "\n".join(explanation_lines).strip()
-                
-                from gitdude.utils import print_command_table
-                error_panel(explanation, title="❌ Push Failed (Diagnosis)")
-                if commands:
-                    print_command_table(commands, title="Suggested Commands to Fix")
-            except Exception:
-                # Fallback if AI fails
-                error_panel(f"Push failed:\n{exc}", title="❌ Push Failed")
-            raise typer.Exit(1)
+            _ai_resolve_and_run(repo, str(exc), "pushing")
         else:
             error_panel(f"Commit failed:\n{exc}", title="❌ Commit Failed")
             raise typer.Exit(1)
@@ -346,32 +326,41 @@ def _shared_commit_flow(push: bool, no_confirm: bool, dry_run: bool, style: str)
 def cmd_push(
     no_confirm: bool = typer.Option(False, "--no-confirm", help="Skip confirmation prompt"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute"),
-    style: str = typer.Option("", "--style", help="Commit style: conventional or freeform")):
+    style: str = typer.Option("", "--style", help="Commit style: conventional or freeform"),
+    branch: str = typer.Option("", "--branch", "-b", help="Branch to push to (default: current branch)"),
+    remote: str = typer.Option("", "--remote", "-r", help="Remote to push to (default: origin)")):
     """
     [bold green]AI-generated commit message + push.[/bold green]
 
     Stages all changes, generates a commit message via AI, and pushes.
+    Use [bold]--branch[/bold] and [bold]--remote[/bold] to target a specific
+    branch/remote instead of the current branch and origin.
     """
-    _shared_commit_flow(push=True, no_confirm=no_confirm, dry_run=dry_run, style=style)
+    _shared_commit_flow(push=True, no_confirm=no_confirm, dry_run=dry_run, style=style,
+                        branch=branch, remote=remote)
 
 
 @app.command("commit")
 def cmd_commit(
     no_confirm: bool = typer.Option(False, "--no-confirm", help="Skip confirmation prompt"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute"),
-    style: str = typer.Option("", "--style", help="Commit style: conventional or freeform")):
+    style: str = typer.Option("", "--style", help="Commit style: conventional or freeform"),
+    branch: str = typer.Option("", "--branch", "-b", help="Branch name hint for the commit (informational)"),
+    remote: str = typer.Option("", "--remote", "-r", help="Remote hint (informational for commit)")):
     """
     [bold green]AI-generated commit message only (no push).[/bold green]
 
     Stages all changes, generates a commit message via AI, and commits.
     """
-    _shared_commit_flow(push=False, no_confirm=no_confirm, dry_run=dry_run, style=style)
+    _shared_commit_flow(push=False, no_confirm=no_confirm, dry_run=dry_run, style=style,
+                        branch=branch, remote=remote)
 
 
 @app.command("tag")
 def cmd_tag(
     no_confirm: bool = typer.Option(False, "--no-confirm", help="Skip confirmation prompt"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute")
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen, don't execute"),
+    remote: str = typer.Option("", "--remote", "-r", help="Remote to push the tag to (default: origin)")
 ):
     """
     [bold green]AI-powered release tagging.[/bold green]
@@ -379,13 +368,22 @@ def cmd_tag(
     Scans commits since last tag, suggests next version, and generates release notes.
     """
     _ensure_configured()
-    from gitdude import git_ops
-    from gitdude.ai import ask_ai
-    from gitdude.utils import custom_style, ai_panel, info_panel, success_panel, warning_panel, error_panel, ask, console as _c
     import questionary
 
+    from gitdude import git_ops
+    from gitdude.ai import ask_ai
+    from gitdude.utils import (
+        ai_panel,
+        custom_style,
+        error_panel,
+        info_panel,
+        success_panel,
+        warning_panel,
+    )
+    from gitdude.utils import console as _c
+
     repo = git_ops.get_repo()
-    
+
     # Get latest tag
     latest_tag = git_ops.get_latest_tag(repo)
     if not latest_tag:
@@ -426,13 +424,13 @@ def cmd_tag(
     _c.print("[dim]Analyzing commits and generating release notes...[/dim]")
     try:
         response = ask_ai(prompt, spinner_msg="🤖 Analyzing release...")
-        
+
         # Parse response
         lines = response.splitlines()
         suggested_version = ""
         release_notes = []
         is_notes = False
-        
+
         for line in lines:
             if line.startswith("SUGGESTED_VERSION:"):
                 suggested_version = line.replace("SUGGESTED_VERSION:", "").strip()
@@ -440,24 +438,35 @@ def cmd_tag(
                 is_notes = True
             elif is_notes and line.strip():
                 release_notes.append(line.strip())
-                
+
         if not suggested_version:
-            suggested_version = current_version # Fallback
-            
+            suggested_version = current_version  # Fallback
+
+        # Validate the version looks like a semver X.Y.Z (allow optional pre-release suffix)
+        import re
+        suggested_version = suggested_version.strip().lstrip("v")
+        if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", suggested_version):
+            warning_panel(
+                f"The AI returned an invalid version: [bold]{suggested_version}[/bold].\n"
+                "Expected format like [bold]1.2.3[/bold]. Falling back to current version.",
+                title="⚠️  Invalid Version"
+            )
+            suggested_version = current_version
+
         notes_text = "\n".join(release_notes).strip()
-        
+
         # Show results
         ai_panel(
             f"Suggested Version: [bold green]v{suggested_version}[/bold green]\n\n"
             f"Release Notes:\n{notes_text}",
             title="🏷️ Suggested Release"
         )
-        
+
         if dry_run:
             from gitdude.utils import info_panel
             info_panel("Dry run mode — no changes made.", title="🧪 Dry Run")
             raise typer.Exit(0)
-            
+
         # Ask for confirmation or edit
         if not no_confirm:
             action = questionary.select(
@@ -465,7 +474,7 @@ def cmd_tag(
                 choices=["Create and Push Tag", "Edit Version/Notes", "Cancel"],
                 style=custom_style
             ).ask()
-            
+
             if action == "Cancel" or not action:
                 raise typer.Exit(0)
             elif action == "Edit Version/Notes":
@@ -473,24 +482,27 @@ def cmd_tag(
                 notes_text = questionary.text("Enter release notes:", default=notes_text, style=custom_style).ask()
                 if not suggested_version:
                     raise typer.Exit(0)
-        
+
         tag_name = f"v{suggested_version}"
-        
+
         # Create tag
         _c.print(f"[dim]Creating tag {tag_name}...[/dim]")
         git_ops.create_tag(repo, tag_name, notes_text)
-        
+
         # Push tag
-        _c.print(f"[dim]Pushing tag {tag_name} to origin...[/dim]")
+        _c.print(f"[dim]Pushing tag {tag_name} to {remote or 'origin'}...[/dim]")
         try:
-            git_ops.push_tag(repo, tag_name)
+            git_ops.push_tag(repo, tag_name, remote)
             success_panel(f"Successfully created and pushed tag [bold]{tag_name}[/bold]!", title="✅ Release Complete")
         except Exception as exc:
             warning_panel(f"Tag created locally but failed to push:\n{exc}", title="⚠️ Push Failed")
-            
+
     except Exception as exc:
         error_panel(f"Failed to generate release notes:\n{exc}", title="❌ Tag Command Failed")
-        raise typer.Exit(1)# ---------------------------------------------------------------------------
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
 # gitdude sync
 # ---------------------------------------------------------------------------
 
@@ -503,8 +515,7 @@ def cmd_sync(
     _ensure_configured()
     from gitdude import git_ops
     from gitdude.ai import ask_ai
-    from gitdude.utils import custom_style, success_panel, error_panel, ai_panel, warning_panel
-    from git import GitCommandError
+    from gitdude.utils import ai_panel, error_panel, success_panel
 
     repo = git_ops.get_repo()
 
@@ -556,12 +567,15 @@ def cmd_back(
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.utils import (
-    custom_style,
-        print_commit_table, ai_panel, confirm, ask,
-        error_panel, success_panel, pick_number
+        ai_panel,
+        ask,
+        confirm,
+        custom_style,
+        error_panel,
+        pick_number,
+        print_commit_table,
+        success_panel,
     )
-    from rich.prompt import Prompt as _P
-    from git import GitCommandError
 
     repo = git_ops.get_repo()
     commits = git_ops.get_recent_commits(repo, n=30)
@@ -633,21 +647,187 @@ def cmd_back(
     except GitCommandError as exc:
         error_panel(str(exc), title="❌ Git Error")
         raise typer.Exit(1)
-def _execute_commands(repo, commands: list[str], confirm_msg: str = "Execute commands?", default_confirm: bool = True) -> None:
-    from gitdude.utils import console, ai_panel, success_panel, confirm
-    from gitdude.ai import ask_ai
+
+
+def _run_command(repo, cmd: str) -> tuple[bool, str]:
+    """Run a single git command, returning (success, output)."""
     from gitdude import git_ops
-    import typer
-    
+
+    console.print(f"\n[bold yellow]▶ {cmd}[/bold yellow]")
+    ok, out = git_ops.run_git_command(repo, cmd)
+    if out:
+        console.print(f"[dim]{out}[/dim]")
+    return ok, out
+
+
+def _ai_resolve_and_run(repo, error_str: str, context: str) -> None:
+    """
+    Ask AI to diagnose a git error that occurred during ``context`` and plan a fix.
+
+    If the AI classifies the fix as safe, run it (after a single confirmation).
+    Otherwise the user is prompted to Allow or Deny EACH command before it runs.
+    """
+    import questionary
+
+    from gitdude.ai import ask_ai
+    from gitdude.utils import (
+        console, custom_style, error_panel, info_panel,
+        print_command_table, success_panel, warning_panel,
+    )
+
+    prompt = (
+        f"A git operation failed while {context}.\n\n"
+        f"Error:\n{error_str}\n\n"
+        "Diagnose the problem and provide the exact commands to fix it.\n"
+        "Respond in EXACTLY this format (no markdown):\n"
+        "EXPLANATION: <2-3 lines, plain English, what went wrong and how to fix it>\n"
+        "IS_SAFE: <yes or no>  (yes ONLY if running the fix cannot lose data or cause irreversible damage)\n"
+        "FIX_COMMANDS:\n"
+        "CMD: git <command>\n"
+        "CMD: git <command>\n"
+    )
+
+    try:
+        raw = ask_ai(prompt, spinner_msg="🤖 Analyzing error and planning fix...")
+    except SystemExit:
+        raise
+    except Exception as exc:
+        error_panel(f"AI could not analyze the error:\n{exc}", title="❌ AI Failure")
+        raise typer.Exit(1)
+
+    lines = raw.splitlines()
+    explanation = ""
+    is_safe = "yes"
+    commands: list[str] = []
+    in_cmds = False
+    for line in lines:
+        s = line.strip()
+        if s.startswith("EXPLANATION:"):
+            explanation = s.replace("EXPLANATION:", "").strip()
+        elif s.startswith("IS_SAFE:"):
+            val = s.replace("IS_SAFE:", "").strip().lower()
+            if val not in ("yes", "y", "true", "safe"):
+                is_safe = "no"
+        elif s.startswith("FIX_COMMANDS:"):
+            in_cmds = True
+        elif s.startswith("CMD:"):
+            cmd = s.replace("CMD:", "").strip()
+            if cmd:
+                commands.append(cmd)
+        elif in_cmds and s.startswith("git "):
+            commands.append(s)
+
+    error_panel(explanation or "The AI did not return a structured diagnosis.", title=f"❌ Error while {context}")
+
+    if not commands:
+        info_panel("The AI suggested no fix commands. Resolve this manually.", title="ℹ️  No Fix Commands")
+        raise typer.Exit(1)
+
+    print_command_table(commands, title="Suggested Fix Commands")
+
+    # Auto-run path for AI-deemed-safe fixes, but still let the user opt out.
+    if is_safe == "yes":
+        proceed = questionary.select(
+            "AI marked this fix as safe to run automatically.",
+            choices=["Run all suggested commands", "Review each command", "Cancel"],
+            default="Run all suggested commands",
+            style=custom_style,
+        ).ask()
+        if not proceed or proceed == "Cancel":
+            console.print("[dim]Cancelled.[/dim]")
+            raise typer.Exit(0)
+        if proceed == "Run all suggested commands":
+            results = {}
+            for cmd in commands:
+                ok, out = _run_command(repo, cmd)
+                results[cmd] = ok
+                if not ok:
+                    error_panel(out or f"Command failed: {cmd}", title="❌ Fix Command Failed")
+            ok_all = all(results.values())
+            if ok_all:
+                success_panel(f"All {len(commands)} suggested command(s) ran successfully.", title="✅ Fix Applied")
+            raise typer.Exit(0 if ok_all else 1)
+
+    # Risky / user-chosen review path: Allow or Deny each command individually.
+    warning_panel(
+        "Review each command before it runs — mark risky ones Deny.",
+        title="⚠️  Allowed-Deny Review",
+    )
+    ok_all = True
+    run_all = False
+    for cmd in commands:
+        if not run_all:
+            choice = questionary.select(
+                f"Run: [bold cyan]{cmd}[/bold cyan]",
+                choices=["Allow", "Deny", "Allow all remaining"],
+                default="Allow",
+                style=custom_style,
+            ).ask()
+            if not choice:
+                console.print("[dim]Cancelled review.[/dim]")
+                raise typer.Exit(0)
+            if choice == "Deny":
+                console.print(f"[dim]⏭  Skipped: {cmd}[/dim]")
+                continue
+            if choice == "Allow all remaining":
+                run_all = True
+        ok, out = _run_command(repo, cmd)
+        if not ok:
+            ok_all = False
+            error_panel(out or f"Command failed: {cmd}", title="❌ Fix Command Failed")
+
+    if ok_all:
+        success_panel("Allowed command(s) completed successfully.", title="✅ Done")
+    raise typer.Exit(0 if ok_all else 1)
+
+
+def _execute_commands(
+    repo,
+    commands: list[str],
+    confirm_msg: str = "Execute commands?",
+    default_confirm: bool = True,
+    per_command: bool = False,
+) -> None:
+    from gitdude.ai import ask_ai
+    from gitdude.utils import ai_panel, confirm, console, error_panel, success_panel
+
+    if per_command:
+        # Skip the single bulk confirmation and go straight to per-command review.
+        ok_all = True
+        run_all = False
+        import questionary
+        from gitdude.utils import custom_style
+
+        for cmd in commands:
+            if not run_all:
+                choice = questionary.select(
+                    f"Run: [bold cyan]{cmd}[/bold cyan]",
+                    choices=["Allow", "Deny", "Allow all remaining"],
+                    default="Allow",
+                    style=custom_style,
+                ).ask()
+                if not choice:
+                    console.print("[dim]Cancelled.[/dim]")
+                    raise typer.Exit(0)
+                if choice == "Deny":
+                    console.print(f"[dim]⏭  Skipped: {cmd}[/dim]")
+                    continue
+                if choice == "Allow all remaining":
+                    run_all = True
+            ok, out = _run_command(repo, cmd)
+            if not ok:
+                ok_all = False
+                error_panel(out or f"Command failed: {cmd}", title="❌ Command Failed")
+        if ok_all:
+            success_panel("Allowed command(s) completed successfully.", title="✅ Done")
+        raise typer.Exit(0 if ok_all else 1)
+
     if not confirm(confirm_msg, default=default_confirm):
         console.print("[dim]Cancelled.[/dim]")
         raise typer.Exit(0)
-        
+
     for cmd in commands:
-        console.print(f"\n[bold yellow]▶ {cmd}[/bold yellow]")
-        ok, out = git_ops.run_git_command(repo, cmd)
-        if out:
-            console.print(f"[dim]{out}[/dim]")
+        ok, out = _run_command(repo, cmd)
         if not ok:
             prompt = (
                 f"This git command failed:\n{cmd}\n\n"
@@ -657,7 +837,7 @@ def _execute_commands(repo, commands: list[str], confirm_msg: str = "Execute com
             fix = ask_ai(prompt, spinner_msg="🤖 Diagnosing failure...")
             ai_panel(fix, title="🤖 Error Analysis & Suggested Fix")
             raise typer.Exit(1)
-            
+
     success_panel(f"All {len(commands)} command(s) executed successfully.", title="✅ Done")
 
 
@@ -678,9 +858,9 @@ def cmd_do(
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.utils import (
-        custom_style,
-        ai_panel, print_command_table, error_panel, success_panel,
-        confirm, info_panel, warning_panel, console
+        info_panel,
+        print_command_table,
+        warning_panel,
     )
 
     repo = git_ops.get_repo()
@@ -726,7 +906,7 @@ def cmd_do(
         info_panel("Dry run — no commands executed.", title="🧪 Dry Run")
         raise typer.Exit(0)
 
-    _execute_commands(repo, commands, confirm_msg=f"Execute {len(commands)} command(s)?")
+    _execute_commands(repo, commands, confirm_msg=f"Execute {len(commands)} command(s)?", per_command=True)
 
 
 # ---------------------------------------------------------------------------
@@ -745,7 +925,7 @@ def cmd_review(
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.config import get_config
-    from gitdude.utils import custom_style, ai_panel, info_panel, warning_panel, error_panel
+    from gitdude.utils import ai_panel, info_panel, warning_panel
 
     repo = git_ops.get_repo()
     cfg = get_config()
@@ -763,13 +943,13 @@ def cmd_review(
         # Try branch diff first
         diff = git_ops.get_branch_vs_main_diff(repo, base_branch)
         mode_label = f"diff vs {base_branch}"
-        
+
         # Fallback to local if branch diff is empty (common on main branch)
         if not diff.strip():
             local_diff = git_ops.get_all_diff(repo)
             if not local_diff:
                 local_diff = git_ops.get_diff_unstaged(repo)
-            
+
             if local_diff.strip():
                 diff = local_diff
                 mode_label = "local uncommitted changes (no branch diff found)"
@@ -821,7 +1001,7 @@ def cmd_pr(
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.config import get_config
-    from gitdude.utils import custom_style, ai_panel, info_panel, warning_panel, success_panel
+    from gitdude.utils import ai_panel, info_panel, success_panel, warning_panel
 
     repo = git_ops.get_repo()
     cfg = get_config()
@@ -830,6 +1010,17 @@ def cmd_pr(
     diff = git_ops.get_branch_vs_main_diff(repo, base_branch)
     log = git_ops.get_log_main_diff(repo, base_branch)
     current_branch = git_ops.get_current_branch(repo)
+
+    # Fall back to local uncommitted changes when there's no branch-vs-base diff
+    # (common when on the base branch itself). Mirrors the `review` command.
+    mode_note = ""
+    if not diff.strip() and not log.strip():
+        local_diff = git_ops.get_all_diff(repo)
+        if not local_diff:
+            local_diff = git_ops.get_diff_unstaged(repo)
+        if local_diff.strip():
+            diff = local_diff
+            mode_note = "local uncommitted changes (no branch diff found)"
 
     if not diff.strip() and not log.strip():
         warning_panel(f"No changes found between [bold]{current_branch}[/bold] and [bold]{base_branch}[/bold].", title="⚠️  Nothing to PR")
@@ -842,7 +1033,8 @@ def cmd_pr(
     prompt = (
         f"You are a senior engineer writing a GitHub Pull Request.\n"
         f"Current branch: {current_branch}\n"
-        f"Base branch: {base_branch}\n\n"
+        f"Base branch: {base_branch}\n"
+        f"Mode: {mode_note}\n" if mode_note else ""
         f"Commit log:\n{log}\n\n"
         f"Diff:\n{diff[:8000]}\n\n"
         "Generate a complete PR submission with the following sections:\n\n"
@@ -885,9 +1077,10 @@ def cmd_whoops(
     from gitdude import git_ops
     from gitdude.ai import ask_ai
     from gitdude.utils import (
-    custom_style,
-        ai_panel, danger_panel, print_command_table, confirm,
-        error_panel, success_panel, info_panel
+        ai_panel,
+        danger_panel,
+        info_panel,
+        print_command_table,
     )
 
     repo = git_ops.get_repo()
@@ -932,7 +1125,7 @@ def cmd_whoops(
         info_panel("Dry run or no commands — nothing executed.", title="🧪 Dry Run")
         raise typer.Exit(0)
 
-    _execute_commands(repo, commands, confirm_msg="Execute the recovery commands?", default_confirm=False)
+    _execute_commands(repo, commands, confirm_msg="Execute the recovery commands?", default_confirm=False, per_command=True)
 
 
 # ---------------------------------------------------------------------------
@@ -947,10 +1140,8 @@ def cmd_config(
     """
     [bold green]Interactive configuration setup for GitDude.[/bold green]
     """
-    from gitdude.config import (
-        get_config, save_config, CONFIG_FILE, mask_key, PROVIDERS
-    )
-    from gitdude.utils import info_panel, success_panel, print_key_value, divider, warning_panel
+    from gitdude.config import CONFIG_FILE, PROVIDERS, get_config, mask_key
+    from gitdude.utils import divider, print_key_value, warning_panel
 
     if reset:
         if CONFIG_FILE.exists():
@@ -989,19 +1180,20 @@ def cmd_config(
         print_key_value("Default Branch", cfg.get("default_branch", "main"))
         print_key_value("Commit Style", cfg.get("commit_style", "conventional"))
         divider()
-        
+
         import questionary
+
         from gitdude.utils import custom_style
         action = questionary.select(
             "Configuration already exists. What would you like to do?",
             choices=["Edit", "Cancel"],
             default="Edit",
             style=custom_style).ask()
-            
+
         if not action or action == "Cancel":
             console.print("[dim]Cancelled.[/dim]")
             raise typer.Exit(0)
-            
+
     _run_interactive_config()
 
 
@@ -1018,7 +1210,7 @@ def cmd_branch(
     _ensure_configured()
     from gitdude import git_ops
     from gitdude.ai import ask_ai
-    from gitdude.utils import custom_style, ai_panel, success_panel, warning_panel
+    from gitdude.utils import ai_panel, custom_style, success_panel, warning_panel
 
     repo = git_ops.get_repo()
 
@@ -1079,7 +1271,7 @@ def cmd_chat(
     _ensure_configured()
     from gitdude import git_ops
     from gitdude.ai import ask_ai
-    from gitdude.utils import custom_style, ai_panel
+    from gitdude.utils import ai_panel
 
     repo = git_ops.get_repo()
     status = git_ops.get_status(repo)

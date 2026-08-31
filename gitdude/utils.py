@@ -6,12 +6,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
-from rich.prompt import Prompt, Confirm
 from rich.text import Text
-from rich import box
 
 console = Console()
 err_console = Console(stderr=True)
@@ -151,6 +151,7 @@ def print_key_value(key: str, value: str) -> None:
 
 
 from questionary import Style
+
 custom_style = Style([
     ('qmark', 'fg:#5F819D bold'),
     ('question', 'bold'),

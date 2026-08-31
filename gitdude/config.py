@@ -39,7 +39,7 @@ def load_config() -> dict[str, Any]:
     if not CONFIG_FILE.exists():
         return {}
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
@@ -67,8 +67,25 @@ def get_config() -> dict[str, Any]:
 
 
 def is_configured() -> bool:
-    """Return True if a config file exists with at least a provider set."""
-    return CONFIG_FILE.exists()
+    """Return True if a usable provider is configured.
+
+    A config file alone is not enough — it must have a valid provider, and
+    cloud providers (everything except ollama) need an API key either in the
+    config or as an environment variable.
+    """
+    if not CONFIG_FILE.exists():
+        return False
+    cfg = load_config()
+    if not cfg:
+        return False
+    provider = cfg.get("provider", "")
+    if not provider or provider not in PROVIDERS:
+        return False
+    if provider == "ollama":
+        return True
+    if get_provider_api_key(provider):
+        return True
+    return False
 
 
 def get_provider_api_key(provider: str) -> str:
