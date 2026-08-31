@@ -91,13 +91,18 @@ pip install gitdude
 AI-generates a commit message for your changes, lets you confirm/edit, then commits and pushes.
 
 ```bash
-gitdude push                      # Stage all → AI commit → push
-gitdude push --no-confirm         # Skip confirmation
-gitdude push --dry-run            # Preview only, don't execute
-gitdude push --style freeform     # Use freeform (not conventional) commit style
+gitdude push                            # Stage all → AI commit → push
+gitdude push --no-confirm               # Skip confirmation
+gitdude push --dry-run                  # Preview only, don't execute
+gitdude push --style freeform           # Use freeform (not conventional) commit style
+gitdude push --branch feature/auth      # Push to a specific branch
+gitdude push --remote upstream          # Push to a specific remote (not just origin)
+gitdude push -b new-branch -r origin    # Short flags
 ```
 
 **Commit types (conventional):** `feat`, `fix`, `chore`, `docs`, `refactor`, `style`, `test`, `perf`, `ci`
+
+> **Push errors:** if the push fails, GitDude asks the AI to diagnose the error and suggest fixes. If the fix is judged **safe**, it offers to run it automatically — otherwise you're prompted to **Allow / Deny / Allow all remaining** for every command before it runs.
 
 ---
 
@@ -110,6 +115,7 @@ gitdude commit                    # Stage all → AI commit
 gitdude commit --no-confirm       # Skip confirmation
 gitdude commit --dry-run          # Preview only, don't execute
 gitdude commit --style freeform   # Use freeform commit style
+gitdude commit --branch feature   # Branch name hint (informational)
 ```
 
 ---
@@ -149,6 +155,8 @@ gitdude do "squash my last 3 commits" --dry-run
 ```
 
 If any command fails, AI reads the error and suggests a fix.
+
+> **Safety:** every generated command is reviewed one-by-one with an **Allow / Deny / Allow all remaining** prompt before it runs — nothing executes without your explicit OK.
 
 ---
 
@@ -191,7 +199,7 @@ gitdude chat "where is the AI provider logic located?"
 
 ### `gitdude pr`
 
-Generates a complete PR title + description + bullet list + testing notes. Auto-copies to clipboard.
+Generates a complete PR title + description + bullet list + testing notes. Auto-copies to clipboard. Falls back to reviewing your local uncommitted changes if there's no branch-vs-base diff.
 
 ```bash
 gitdude pr
@@ -203,12 +211,13 @@ gitdude pr --no-copy              # Don't copy to clipboard
 
 ### `gitdude tag`
 
-Scans commits since last tag, suggests next version, and generates release notes.
+Scans commits since last tag, suggests next version, and generates release notes. The suggested version is validated against semantic versioning (`X.Y.Z`) before tagging.
 
 ```bash
 gitdude tag
 gitdude tag --no-confirm          # Skip confirmation
 gitdude tag --dry-run             # Preview only
+gitdude tag --remote upstream     # Push the tag to a specific remote (not just origin)
 ```
 
 ---
@@ -221,6 +230,8 @@ Emergency recovery. Feeds git status + log + reflog to AI. Diagnoses what went w
 gitdude whoops
 gitdude whoops --dry-run          # Diagnose only, don't execute
 ```
+
+> **Safety:** dangerous recovery commands are reviewed one-by-one with **Allow / Deny / Allow all remaining** before executing — you're in control of every step.
 
 ---
 
@@ -270,8 +281,11 @@ All providers go through a single interface: `ask_ai(prompt) -> str` with spinne
 ## 🛡️ Safety Features
 
 - ✅ **All destructive operations** (hard reset, force push, etc.) require explicit confirmation
+- ✅ **Per-command Allow/Deny** — AI-suggested fixes (`gitdude do`, `whoops`) and risky push-recovery commands run only after you **Allow** each one (with an **Allow all remaining** shortcut)
+- ✅ **AI safety classification** — on push errors the AI first judges whether a fix is safe; safe fixes can be auto-applied (with confirmation), risky ones go through individual review
 - ✅ **`--dry-run` flag** available on all mutating commands
 - ✅ **Color-coded risk levels** — green (safe), yellow (caution), red (destructive)
+- ✅ **Command-injection safe** — AI-generated commands run as literal arguments (no shell), so special characters can't execute arbitrary code
 - ✅ **No tracebacks** — all exceptions caught and shown as friendly Rich error panels
 - ✅ **API keys** stored privately in `~/.gitdude/config.json`, never in project files
 
